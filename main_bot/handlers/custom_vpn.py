@@ -69,7 +69,10 @@ async def cb_cvpn_type(callback: CallbackQuery, state: FSMContext, storage_backe
             providers = [p for p in providers if p.supports_whitelist]
 
         type_label = "белый список" if vpn_type == "whitelist" else "обычный"
-        hint = f"Выберите {'2 провайдера' if max_providers == 2 else '1 провайдера'}:"
+        if vpn_type == "whitelist":
+            hint = "Выберите 1 российский 🇷🇺 и 1 зарубежный 🌍 сервер:"
+        else:
+            hint = "Выберите провайдера:"
 
         if not providers:
             await callback.message.edit_text(
@@ -112,8 +115,14 @@ async def cb_prov_select(callback: CallbackQuery, state: FSMContext, storage_bac
         await state.update_data(selected_providers=selected)
         providers = await storage_backend.get_providers(active_only=True)
 
-        hint = f"Выберите {'2 провайдера' if max_providers == 2 else '1 провайдера'} (выбрано: {len(selected)}/{max_providers}):"
         type_label = "белый список" if vpn_type == "whitelist" else "обычный"
+        if vpn_type == "whitelist":
+            hint = (
+                f"Выберите 1 российский и 1 зарубежный сервер (выбрано: {len(selected)}/2):\n"
+                f"🇷🇺 — российский, 🌍 — зарубежный"
+            )
+        else:
+            hint = f"Выберите провайдера (выбрано: {len(selected)}/1):"
 
         await callback.message.edit_text(
             f"🛠 *Собрать свой VPN — {type_label}*\n\n{hint}",
@@ -139,6 +148,19 @@ async def cb_prov_confirm(callback: CallbackQuery, state: FSMContext, storage_ba
                 show_alert=True,
             )
             return
+
+        if vpn_type == "whitelist":
+            all_provs = await storage_backend.get_providers(active_only=True)
+            prov_map = {p.id: p for p in all_provs}
+            selected_provs = [prov_map[pid] for pid in selected if pid in prov_map]
+            has_russian = any(p.is_russian for p in selected_provs)
+            has_foreign = any(not p.is_russian for p in selected_provs)
+            if not has_russian or not has_foreign:
+                await callback.answer(
+                    "Для белого списка необходимо выбрать 1 российский 🇷🇺 и 1 зарубежный 🌍 сервер.",
+                    show_alert=True,
+                )
+                return
 
         # Find presets. For whitelist with 2 providers, show presets for first provider
         # (preset defines server specs; same spec applied to both)

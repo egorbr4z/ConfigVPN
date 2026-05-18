@@ -13,7 +13,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from core.models import Payment, Subscription
 from core.storage import BaseStorage
-from core.v2ray import generate_vless_config
 
 logger = logging.getLogger(__name__)
 router = Router(name="admin_payments")
@@ -23,6 +22,10 @@ PAGE_SIZE = 8
 
 class PaymentRejectState(StatesGroup):
     entering_reason = State()
+
+
+class PaymentConfirmState(StatesGroup):
+    entering_url = State()
 
 
 def kb_payments_list(payments: list[Payment], page: int, total_pages: int, status: str) -> object:
@@ -157,43 +160,60 @@ async def cb_payment_view(callback: CallbackQuery, storage_backend: BaseStorage)
 
 
 @router.callback_query(F.data.startswith("adm_pay:confirm:"))
-async def cb_payment_confirm(callback: CallbackQuery, storage_backend: BaseStorage) -> None:
+async def cb_payment_confirm(callback: CallbackQuery, state: FSMContext) -> None:
     try:
         pay_id = callback.data.split(":")[2]
+        await state.set_state(PaymentConfirmState.entering_url)
+        await state.update_data(confirm_payment_id=pay_id)
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="◀️ Отмена", callback_data=f"adm_pay:view:{pay_id}")
+        await callback.message.edit_text(
+            "🔗 Введите ссылку на подписку (https://...), которая будет выдана пользователю:",
+            reply_markup=builder.as_markup(),
+        )
+        await callback.answer()
+    except Exception:
+        logger.exception("Ошибка в cb_payment_confirm")
+        await callback.answer("Произошла ошибка.", show_alert=True)
+
+
+@router.message(PaymentConfirmState.entering_url)
+async def handle_confirm_url(message: Message, state: FSMContext, storage_backend: BaseStorage) -> None:
+    try:
+        url = (message.text or "").strip()
+        data = await state.get_data()
+        pay_id: str = data.get("confirm_payment_id", "")
+        await state.clear()
+
+        if not url.startswith("http"):
+            builder = InlineKeyboardBuilder()
+            builder.button(text="◀️ Отмена", callback_data=f"adm_pay:view:{pay_id}")
+            await message.answer(
+                "❌ Некорректная ссылка. Введите URL, начинающийся с https://",
+                reply_markup=builder.as_markup(),
+            )
+            return
+
         payment = await storage_backend.get_payment(pay_id)
         if payment is None:
-            await callback.answer("Платёж не найден.", show_alert=True)
+            await message.answer("Платёж не найден.")
             return
 
         if payment.status != "pending":
-            await callback.answer("Платёж уже обработан.", show_alert=True)
+            await message.answer("Платёж уже обработан.")
             return
 
-        # Update payment status
         payment.status = "confirmed"
         payment.reviewed_at = datetime.now(timezone.utc).isoformat()
-        payment.reviewed_by = callback.from_user.id
+        payment.reviewed_by = message.from_user.id
         await storage_backend.save_payment(payment)
 
-        # Create subscription
-        subscription = await _create_subscription(payment, storage_backend)
-
-        # Apply referral bonus if this is the user's first confirmed payment
+        subscription = await _create_subscription(payment, storage_backend, subscription_url=url)
         await _apply_referral_bonus_if_needed(payment.user_id, storage_backend)
 
-        # Notify user
         try:
-            type_label = (
-                "🔒 Белый список" if subscription.type == "whitelist" else "💰 Обычный VPN"
-            )
-            config_text = ""
-            if subscription.v2ray_config:
-                conn_strings = subscription.v2ray_config.get("connection_strings", [])
-                if conn_strings:
-                    config_text = "\n\n🔑 *Ваши конфигурации VLESS:*\n" + "\n".join(
-                        f"`{s}`" for s in conn_strings
-                    )
-
+            type_label = "🔒 Белый список" if subscription.type == "whitelist" else "💰 Обычный VPN"
             expires_text = ""
             if subscription.expires_at:
                 try:
@@ -205,44 +225,38 @@ async def cb_payment_confirm(callback: CallbackQuery, storage_backend: BaseStora
             user_text = (
                 f"✅ *Ваш платёж подтверждён!*\n\n"
                 f"Подписка активирована: {type_label}\n"
-                f"Трафик: {subscription.traffic_gb:.0f} ГБ{expires_text}"
-                f"{config_text}\n\n"
-                f"Для просмотра конфигураций: Мой аккаунт → Мои подписки → Мои конфигурации"
+                f"Трафик: {subscription.traffic_gb:.0f} ГБ{expires_text}\n\n"
+                f"🔗 *Ссылка на подписку:*\n`{url}`\n\n"
+                f"Добавьте ссылку в ваш VPN-клиент (Hiddify, Nekobox, Shadowrocket и др.)"
             )
-            await callback.bot.send_message(payment.user_id, user_text, parse_mode="Markdown")
+            await message.bot.send_message(payment.user_id, user_text, parse_mode="Markdown")
         except Exception:
             logger.warning("Не удалось уведомить пользователя %s", payment.user_id)
 
-        await callback.answer("✅ Платёж подтверждён, подписка активирована.", show_alert=True)
-        await cb_payment_view(callback, storage_backend)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="💳 К платежам", callback_data="adm:payments")
+        await message.answer(
+            "✅ Платёж подтверждён, подписка активирована, пользователь уведомлён.",
+            reply_markup=builder.as_markup(),
+        )
     except Exception:
-        logger.exception("Ошибка в cb_payment_confirm")
-        await callback.answer("Произошла ошибка.", show_alert=True)
+        logger.exception("Ошибка в handle_confirm_url")
+        await message.answer("Произошла ошибка.")
+        await state.clear()
 
 
-async def _create_subscription(payment: Payment, storage: BaseStorage) -> Subscription:
-    """Create and save a subscription after payment confirmation."""
+async def _create_subscription(
+    payment: Payment, storage: BaseStorage, subscription_url: str = ""
+) -> Subscription:
     details = payment.product_details
     now = datetime.now(timezone.utc)
 
     if payment.type == "subscription":
-        # Ready subscription
         plan_id = details.get("plan_id", "")
         plan_type = details.get("plan_type", "regular")
         duration_days = details.get("duration_days", 30)
         traffic_gb = details.get("traffic_gb", 100.0)
         expires_at = (now + timedelta(days=duration_days)).isoformat()
-
-        # Get providers for config
-        providers = await storage.get_providers(active_only=True)
-        if plan_type == "whitelist":
-            wl_providers = [p for p in providers if p.supports_whitelist]
-            selected_providers = wl_providers[:2] if wl_providers else providers[:1]
-        else:
-            selected_providers = providers[:1]
-
-        provider_ids = [p.id for p in selected_providers]
-        v2ray_config = generate_vless_config(selected_providers)
 
         sub = Subscription(
             id=BaseStorage.new_id(),
@@ -250,29 +264,19 @@ async def _create_subscription(payment: Payment, storage: BaseStorage) -> Subscr
             type=plan_type,
             kind="ready",
             plan_id=plan_id,
-            provider_ids=provider_ids,
+            provider_ids=[],
             preset_id=None,
             traffic_gb=traffic_gb,
             used_gb=0.0,
             expires_at=expires_at,
             is_active=True,
-            v2ray_config=v2ray_config,
+            subscription_url=subscription_url or None,
         )
-
     else:
-        # Custom VPN
         provider_ids = details.get("provider_ids", [])
         vpn_type = details.get("vpn_type", "regular")
         preset_id = details.get("preset_id")
-        traffic_gb = 200.0  # Default for custom
-
-        prov_objects = []
-        for pid in provider_ids:
-            prov = await storage.get_provider(pid)
-            if prov:
-                prov_objects.append(prov)
-
-        v2ray_config = generate_vless_config(prov_objects)
+        traffic_gb = 200.0
 
         sub = Subscription(
             id=BaseStorage.new_id(),
@@ -286,7 +290,7 @@ async def _create_subscription(payment: Payment, storage: BaseStorage) -> Subscr
             used_gb=0.0,
             expires_at=(now + timedelta(days=30)).isoformat(),
             is_active=True,
-            v2ray_config=v2ray_config,
+            subscription_url=subscription_url or None,
         )
 
     await storage.save_subscription(sub)

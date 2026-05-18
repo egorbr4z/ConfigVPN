@@ -252,7 +252,7 @@ async def cb_user_subscriptions(callback: CallbackQuery, storage_backend: BaseSt
             status = "✅" if sub.is_active else "❌"
             builder.button(
                 text=f"{status} [{type_label}] {sub.id[:8]}...",
-                callback_data=f"adm_sub_mgmt:view:{sub.id}:{user_id}",
+                callback_data=f"adm_sub_mgmt:view:{sub.id}",
             )
         builder.button(text="◀️ Назад", callback_data=f"adm_usr:view:{user_id}")
         builder.adjust(1)
@@ -268,14 +268,13 @@ async def cb_user_subscriptions(callback: CallbackQuery, storage_backend: BaseSt
 @router.callback_query(F.data.startswith("adm_sub_mgmt:view:"))
 async def cb_sub_view(callback: CallbackQuery, storage_backend: BaseStorage) -> None:
     try:
-        parts = callback.data.split(":")
-        sub_id = parts[2]
-        user_id = int(parts[3])
+        sub_id = callback.data.split(":")[2]
         sub = await storage_backend.get_subscription(sub_id)
         if sub is None:
             await callback.answer("Подписка не найдена.", show_alert=True)
             return
 
+        user_id = sub.user_id
         type_label = "Белый список" if sub.type == "whitelist" else "Обычный VPN"
         status = "✅ Активна" if sub.is_active else "❌ Неактивна"
 
@@ -283,11 +282,11 @@ async def cb_sub_view(callback: CallbackQuery, storage_backend: BaseStorage) -> 
         if sub.is_active:
             builder.button(
                 text="❌ Деактивировать",
-                callback_data=f"adm_sub_mgmt:deactivate:{sub_id}:{user_id}",
+                callback_data=f"adm_sub_mgmt:deact:{sub_id}",
             )
         builder.button(
             text="📅 Продлить на 30 дней",
-            callback_data=f"adm_sub_mgmt:extend:{sub_id}:{user_id}",
+            callback_data=f"adm_sub_mgmt:ext:{sub_id}",
         )
         builder.button(text="◀️ Назад", callback_data=f"adm_usr:subs:{user_id}")
         builder.adjust(1)
@@ -308,12 +307,10 @@ async def cb_sub_view(callback: CallbackQuery, storage_backend: BaseStorage) -> 
         await callback.answer("Произошла ошибка.", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("adm_sub_mgmt:deactivate:"))
+@router.callback_query(F.data.startswith("adm_sub_mgmt:deact:"))
 async def cb_sub_deactivate(callback: CallbackQuery, storage_backend: BaseStorage) -> None:
     try:
-        parts = callback.data.split(":")
-        sub_id = parts[2]
-        user_id = int(parts[3])
+        sub_id = callback.data.split(":")[2]
         sub = await storage_backend.get_subscription(sub_id)
         if sub is None:
             await callback.answer("Подписка не найдена.", show_alert=True)
@@ -329,13 +326,11 @@ async def cb_sub_deactivate(callback: CallbackQuery, storage_backend: BaseStorag
         await callback.answer("Произошла ошибка.", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("adm_sub_mgmt:extend:"))
+@router.callback_query(F.data.startswith("adm_sub_mgmt:ext:"))
 async def cb_sub_extend(callback: CallbackQuery, storage_backend: BaseStorage) -> None:
     try:
         from datetime import datetime, timedelta, timezone
-        parts = callback.data.split(":")
-        sub_id = parts[2]
-        user_id = int(parts[3])
+        sub_id = callback.data.split(":")[2]
         sub = await storage_backend.get_subscription(sub_id)
         if sub is None:
             await callback.answer("Подписка не найдена.", show_alert=True)

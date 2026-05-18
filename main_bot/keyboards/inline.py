@@ -109,8 +109,9 @@ def kb_provider_select(
         if vpn_type == "whitelist" and not prov.supports_whitelist:
             continue
         check = "✅ " if prov.id in selected_ids else ""
+        flag = "🇷🇺" if prov.is_russian else "🌍"
         builder.button(
-            text=f"{check}{prov.name} ({prov.location})",
+            text=f"{check}{flag} {prov.name} ({prov.location})",
             callback_data=f"prov_select:{prov.id}",
         )
     if len(selected_ids) == max_select:

@@ -22,6 +22,7 @@ class ProviderAddState(StatesGroup):
     entering_location = State()
     entering_server_ip = State()
     entering_supports_whitelist = State()
+    entering_is_russian = State()
 
 
 class PresetAddState(StatesGroup):
@@ -50,9 +51,11 @@ def kb_providers_list(providers: list[Provider]) -> object:
 def kb_provider_detail(provider: Provider) -> object:
     builder = InlineKeyboardBuilder()
     toggle_label = "❌ Деактивировать" if provider.is_active else "✅ Активировать"
-    wl_toggle = "🔓 Отключить whitelist" if provider.supports_whitelist else "🔒 Включить whitelist"
+    wl_toggle = "🔓 Откл. whitelist" if provider.supports_whitelist else "🔒 Вкл. whitelist"
+    ru_toggle = "🌍 Сделать зарубежным" if provider.is_russian else "🇷🇺 Сделать российским"
     builder.button(text=toggle_label, callback_data=f"adm_prov:toggle:{provider.id}")
     builder.button(text=wl_toggle, callback_data=f"adm_prov:toggle_wl:{provider.id}")
+    builder.button(text=ru_toggle, callback_data=f"adm_prov:toggle_ru:{provider.id}")
     builder.button(text="✏️ Изменить IP", callback_data=f"adm_prov:edit_ip:{provider.id}")
     builder.button(text="📋 Пресеты провайдера", callback_data=f"adm_preset:by_prov:{provider.id}")
     builder.button(text="🗑 Удалить", callback_data=f"adm_prov:delete:{provider.id}")
@@ -86,6 +89,7 @@ async def cb_provider_view(callback: CallbackQuery, storage_backend: BaseStorage
 
         status = "✅ Активен" if prov.is_active else "❌ Неактивен"
         wl = "✅ Поддерживается" if prov.supports_whitelist else "❌ Не поддерживается"
+        ru_label = "🇷🇺 Российский" if prov.is_russian else "🌍 Зарубежный"
         presets = await storage_backend.get_presets(provider_id=prov_id, active_only=False)
 
         text = (
@@ -93,6 +97,7 @@ async def cb_provider_view(callback: CallbackQuery, storage_backend: BaseStorage
             f"Название: {prov.name}\n"
             f"Локация: {prov.location}\n"
             f"IP сервера: `{prov.server_ip}`\n"
+            f"Тип: {ru_label}\n"
             f"Статус: {status}\n"
             f"Белый список: {wl}\n"
             f"Пресетов: {len(presets)}"
@@ -120,6 +125,24 @@ async def cb_provider_toggle(callback: CallbackQuery, storage_backend: BaseStora
         await cb_provider_view(callback, storage_backend)
     except Exception:
         logger.exception("Ошибка в cb_provider_toggle")
+        await callback.answer("Произошла ошибка.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("adm_prov:toggle_ru:"))
+async def cb_provider_toggle_ru(callback: CallbackQuery, storage_backend: BaseStorage) -> None:
+    try:
+        prov_id = callback.data.split(":")[2]
+        prov = await storage_backend.get_provider(prov_id)
+        if prov is None:
+            await callback.answer("Провайдер не найден.", show_alert=True)
+            return
+        prov.is_russian = not prov.is_russian
+        await storage_backend.save_provider(prov)
+        label = "российский 🇷🇺" if prov.is_russian else "зарубежный 🌍"
+        await callback.answer(f"Провайдер помечен как {label}.", show_alert=True)
+        await cb_provider_view(callback, storage_backend)
+    except Exception:
+        logger.exception("Ошибка в cb_provider_toggle_ru")
         await callback.answer("Произошла ошибка.", show_alert=True)
 
 
@@ -248,9 +271,28 @@ async def handle_prov_ip(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("prov_wl_choice:"), ProviderAddState.entering_supports_whitelist)
-async def handle_prov_wl_choice(callback: CallbackQuery, state: FSMContext, storage_backend: BaseStorage) -> None:
+async def handle_prov_wl_choice(callback: CallbackQuery, state: FSMContext) -> None:
     try:
         supports_wl = callback.data.split(":")[1] == "yes"
+        await state.update_data(supports_whitelist=supports_wl)
+        await state.set_state(ProviderAddState.entering_is_russian)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🇷🇺 Российский", callback_data="prov_ru_choice:yes")
+        builder.button(text="🌍 Зарубежный", callback_data="prov_ru_choice:no")
+        await callback.message.edit_text(
+            "Это российский или зарубежный сервер?",
+            reply_markup=builder.as_markup(),
+        )
+        await callback.answer()
+    except Exception:
+        logger.exception("Ошибка в handle_prov_wl_choice")
+        await callback.answer("Произошла ошибка.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("prov_ru_choice:"), ProviderAddState.entering_is_russian)
+async def handle_prov_ru_choice(callback: CallbackQuery, state: FSMContext, storage_backend: BaseStorage) -> None:
+    try:
+        is_russian = callback.data.split(":")[1] == "yes"
         data = await state.get_data()
         await state.clear()
 
@@ -260,19 +302,21 @@ async def handle_prov_wl_choice(callback: CallbackQuery, state: FSMContext, stor
             location=data["location"],
             server_ip=data["server_ip"],
             is_active=True,
-            supports_whitelist=supports_wl,
+            supports_whitelist=data["supports_whitelist"],
+            is_russian=is_russian,
         )
         await storage_backend.save_provider(prov)
 
         builder = InlineKeyboardBuilder()
         builder.button(text="📋 К провайдерам", callback_data="adm:providers")
+        flag = "🇷🇺" if is_russian else "🌍"
         await callback.message.edit_text(
-            f"✅ Провайдер *{prov.name}* добавлен!",
+            f"✅ Провайдер {flag} *{prov.name}* добавлен!",
             reply_markup=builder.as_markup(),
         )
         await callback.answer()
     except Exception:
-        logger.exception("Ошибка в handle_prov_wl_choice")
+        logger.exception("Ошибка в handle_prov_ru_choice")
         await callback.answer("Произошла ошибка.", show_alert=True)
 
 
