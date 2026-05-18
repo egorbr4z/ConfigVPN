@@ -252,9 +252,16 @@ class JSONStorage(BaseStorage):
     # Providers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _provider_from_raw(raw: dict) -> Provider:
+        raw = raw.copy()
+        valid = set(Provider.__dataclass_fields__.keys())
+        raw = {k: v for k, v in raw.items() if k in valid}
+        return Provider(**raw)
+
     async def get_providers(self, active_only: bool = True) -> list[Provider]:
         data = await self._read("providers.json", {})
-        providers = [Provider(**v) for v in data.values()]
+        providers = [self._provider_from_raw(v) for v in data.values()]
         if active_only:
             providers = [p for p in providers if p.is_active]
         return providers
@@ -262,7 +269,7 @@ class JSONStorage(BaseStorage):
     async def get_provider(self, provider_id: str) -> Provider | None:
         data = await self._read("providers.json", {})
         raw = data.get(provider_id)
-        return Provider(**raw) if raw else None
+        return self._provider_from_raw(raw) if raw else None
 
     async def save_provider(self, provider: Provider) -> None:
         data = await self._read("providers.json", {})

@@ -111,7 +111,7 @@ async def cb_subscription_plan(callback: CallbackQuery, storage_backend: BaseSto
                 "Вы не можете приобрести новую до её истечения."
             )
 
-        await callback.message.edit_text(text, reply_markup=kb_plan_detail(plan_id))
+        await callback.message.edit_text(text, reply_markup=kb_plan_detail(plan_id, plan.type))
         await callback.answer()
     except Exception:
         logger.exception("Ошибка в cb_subscription_plan")
