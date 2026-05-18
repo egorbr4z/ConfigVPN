@@ -1,0 +1,26 @@
+{
+  "prov_nl_01": {
+    "id": "prov_nl_01",
+    "name": "NL-Amsterdam-01",
+    "location": "Нидерланды, Амстердам",
+    "server_ip": "185.100.65.10",
+    "is_active": true,
+    "supports_whitelist": true
+  },
+  "prov_de_01": {
+    "id": "prov_de_01",
+    "name": "DE-Frankfurt-01",
+    "location": "Германия, Франкфурт",
+    "server_ip": "78.47.128.20",
+    "is_active": true,
+    "supports_whitelist": true
+  },
+  "prov_fi_01": {
+    "id": "prov_fi_01",
+    "name": "FI-Helsinki-01",
+    "location": "Финляндия, Хельсинки",
+    "server_ip": "95.217.14.30",
+    "is_active": true,
+    "supports_whitelist": false
+  }
+}

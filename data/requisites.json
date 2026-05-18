@@ -1,0 +1,23 @@
+{
+  "req_card_01": {
+    "id": "req_card_01",
+    "type": "card",
+    "value": "4276 1234 5678 9012",
+    "holder_name": "Иван Петров",
+    "is_active": true
+  },
+  "req_phone_01": {
+    "id": "req_phone_01",
+    "type": "phone",
+    "value": "+7 (900) 123-45-67",
+    "holder_name": "Иван Петров",
+    "is_active": true
+  },
+  "req_card_02": {
+    "id": "req_card_02",
+    "type": "card",
+    "value": "2200 9876 5432 1098",
+    "holder_name": "Мария Сидорова",
+    "is_active": true
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "preset_1gb_1cpu": {
+    "id": "preset_1gb_1cpu",
+    "provider_id": "prov_nl_01",
+    "ram_gb": 1,
+    "cpu_count": 1,
+    "price": 350.0,
+    "is_active": true
+  },
+  "preset_2gb_1cpu": {
+    "id": "preset_2gb_1cpu",
+    "provider_id": "prov_nl_01",
+    "ram_gb": 2,
+    "cpu_count": 1,
+    "price": 550.0,
+    "is_active": true
+  },
+  "preset_4gb_2cpu": {
+    "id": "preset_4gb_2cpu",
+    "provider_id": "prov_de_01",
+    "ram_gb": 4,
+    "cpu_count": 2,
+    "price": 900.0,
+    "is_active": true
+  },
+  "preset_2gb_2cpu_fi": {
+    "id": "preset_2gb_2cpu_fi",
+    "provider_id": "prov_fi_01",
+    "ram_gb": 2,
+    "cpu_count": 2,
+    "price": 600.0,
+    "is_active": true
+  }
+}
