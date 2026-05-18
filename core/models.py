@@ -38,6 +38,7 @@ class Provider:
     server_ip: str
     is_active: bool
     supports_whitelist: bool
+    is_russian: bool = False
 
 
 @dataclass
@@ -63,7 +64,7 @@ class Subscription:
     used_gb: float
     expires_at: str | None  # ISO datetime
     is_active: bool
-    v2ray_config: dict | None
+    subscription_url: str | None
 
 
 @dataclass

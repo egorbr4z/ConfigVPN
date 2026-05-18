@@ -78,7 +78,7 @@ async def cb_account_subscriptions(callback: CallbackQuery, storage_backend: Bas
         active_subs = [s for s in all_subs if s.is_active]
         inactive_subs = [s for s in all_subs if not s.is_active]
 
-        has_configs = any(s.v2ray_config is not None for s in active_subs)
+        has_configs = any(s.subscription_url is not None for s in active_subs)
 
         if not all_subs:
             text = (
@@ -117,28 +117,26 @@ async def cb_account_subscriptions(callback: CallbackQuery, storage_backend: Bas
 async def cb_account_configs(callback: CallbackQuery, storage_backend: BaseStorage, user: User) -> None:
     try:
         active_subs = await storage_backend.get_user_subscriptions(user.telegram_id, active_only=True)
-        configs_subs = [s for s in active_subs if s.v2ray_config is not None]
+        configs_subs = [s for s in active_subs if s.subscription_url is not None]
 
         if not configs_subs:
             await callback.message.edit_text(
-                "🔑 *Мои конфигурации*\n\nКонфигурации недоступны.",
+                "🔗 *Мои подписки*\n\nСсылки на подписки пока недоступны.",
                 reply_markup=kb_account_configs_back(),
             )
             await callback.answer()
             return
 
-        lines = ["🔑 *Мои конфигурации VLESS*\n"]
+        lines = ["🔗 *Ссылки на подписки*\n"]
         for sub in configs_subs:
-            type_label = "Белый список" if sub.type == "whitelist" else "Обычный VPN"
+            type_label = "🔒 Белый список" if sub.type == "whitelist" else "💰 Обычный VPN"
             lines.append(f"*{type_label}:*")
-            cfg = sub.v2ray_config or {}
-            for conn_str in cfg.get("connection_strings", []):
-                lines.append(f"`{conn_str}`")
+            lines.append(f"`{sub.subscription_url}`")
             lines.append("")
 
         lines.append(
-            "_Скопируйте строку подключения и импортируйте в v2rayNG (Android), "
-            "Streisand (iOS) или v2rayN (Windows)._"
+            "_Добавьте ссылку в VPN-клиент: Hiddify, Nekobox (Android), "
+            "Shadowrocket, Streisand (iOS), Hiddify (Windows/Mac)._"
         )
 
         await callback.message.edit_text(
