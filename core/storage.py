@@ -219,9 +219,16 @@ class JSONStorage(BaseStorage):
     # Subscription plans
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _plan_from_raw(raw: dict) -> SubscriptionPlan:
+        raw = raw.copy()
+        valid = set(SubscriptionPlan.__dataclass_fields__.keys())
+        raw = {k: v for k, v in raw.items() if k in valid}
+        return SubscriptionPlan(**raw)
+
     async def get_subscription_plans(self, active_only: bool = True) -> list[SubscriptionPlan]:
         data = await self._read("subscription_plans.json", {})
-        plans = [SubscriptionPlan(**v) for v in data.values()]
+        plans = [self._plan_from_raw(v) for v in data.values()]
         if active_only:
             plans = [p for p in plans if p.is_active]
         return plans
@@ -229,7 +236,7 @@ class JSONStorage(BaseStorage):
     async def get_subscription_plan(self, plan_id: str) -> SubscriptionPlan | None:
         data = await self._read("subscription_plans.json", {})
         raw = data.get(plan_id)
-        return SubscriptionPlan(**raw) if raw else None
+        return self._plan_from_raw(raw) if raw else None
 
     async def save_subscription_plan(self, plan: SubscriptionPlan) -> None:
         data = await self._read("subscription_plans.json", {})
@@ -303,6 +310,15 @@ class JSONStorage(BaseStorage):
         return await self._read("subscriptions.json", {})
 
     def _sub_from_raw(self, raw: dict) -> Subscription:
+        raw = raw.copy()
+        # Migrate old v2ray_config field to subscription_url
+        if "v2ray_config" in raw:
+            old = raw.pop("v2ray_config")
+            if "subscription_url" not in raw:
+                raw["subscription_url"] = None
+        # Remove any unknown keys to avoid TypeError
+        valid = set(Subscription.__dataclass_fields__.keys())
+        raw = {k: v for k, v in raw.items() if k in valid}
         return Subscription(**raw)
 
     async def get_user_subscriptions(self, user_id: int, active_only: bool = False) -> list[Subscription]:

@@ -23,6 +23,8 @@ class PlanEditState(StatesGroup):
     entering_price = State()
     entering_duration = State()
     entering_traffic = State()
+    entering_monthly_traffic = State()
+    entering_connections = State()
     entering_description = State()
     # Edit existing
     editing_field = State()
@@ -45,13 +47,15 @@ def kb_plans_list(plans: list[SubscriptionPlan]) -> object:
 def kb_plan_detail(plan: SubscriptionPlan) -> object:
     builder = InlineKeyboardBuilder()
     toggle_label = "❌ Деактивировать" if plan.is_active else "✅ Активировать"
-    builder.button(text="✏️ Изменить цену", callback_data=f"adm_plan:edit_price:{plan.id}")
-    builder.button(text="✏️ Изменить название", callback_data=f"adm_plan:edit_name:{plan.id}")
-    builder.button(text="✏️ Изменить описание", callback_data=f"adm_plan:edit_desc:{plan.id}")
+    builder.button(text="✏️ Название", callback_data=f"adm_plan:edit_name:{plan.id}")
+    builder.button(text="✏️ Цена", callback_data=f"adm_plan:edit_price:{plan.id}")
+    builder.button(text="✏️ Трафик/мес", callback_data=f"adm_plan:edit_mtraffic:{plan.id}")
+    builder.button(text="✏️ Подключений", callback_data=f"adm_plan:edit_conn:{plan.id}")
+    builder.button(text="✏️ Описание", callback_data=f"adm_plan:edit_desc:{plan.id}")
     builder.button(text=toggle_label, callback_data=f"adm_plan:toggle:{plan.id}")
     builder.button(text="🗑 Удалить", callback_data=f"adm_plan:delete:{plan.id}")
     builder.button(text="◀️ Назад", callback_data="adm:subscriptions")
-    builder.adjust(1)
+    builder.adjust(2, 2, 1, 1, 1)
     return builder.as_markup()
 
 
@@ -80,6 +84,7 @@ async def cb_plan_view(callback: CallbackQuery, storage_backend: BaseStorage) ->
 
         type_label = "🔒 Белый список" if plan.type == "whitelist" else "💰 Обычный VPN"
         status = "✅ Активен" if plan.is_active else "❌ Неактивен"
+        traffic_month = "♾ Безлимит" if plan.monthly_traffic_gb == 0 else f"{plan.monthly_traffic_gb:.0f} ГБ"
 
         text = (
             f"📦 *Тариф*\n\n"
@@ -87,7 +92,8 @@ async def cb_plan_view(callback: CallbackQuery, storage_backend: BaseStorage) ->
             f"Тип: {type_label}\n"
             f"Цена: *{plan.price:.0f} ₽*\n"
             f"Длительность: {plan.duration_days} дн.\n"
-            f"Трафик: {plan.traffic_gb:.0f} ГБ\n"
+            f"Трафик в месяц: {traffic_month}\n"
+            f"Подключений: {plan.max_connections}\n"
             f"Статус: {status}\n\n"
             f"Описание: {plan.description}"
         )
@@ -232,10 +238,62 @@ async def handle_plan_traffic(message: Message, state: FSMContext) -> None:
             await message.answer("Введите корректный объём трафика:")
             return
         await state.update_data(traffic_gb=traffic)
+        await state.set_state(PlanEditState.entering_monthly_traffic)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="♾ Безлимит", callback_data="plan_mtraffic:0")
+        await message.answer(
+            "Введите трафик в месяц в ГБ (или нажмите «Безлимит»):",
+            reply_markup=builder.as_markup(),
+        )
+    except Exception:
+        logger.exception("Ошибка в handle_plan_traffic")
+        await message.answer("Произошла ошибка.")
+
+
+@router.message(PlanEditState.entering_monthly_traffic)
+async def handle_plan_monthly_traffic(message: Message, state: FSMContext) -> None:
+    try:
+        raw = (message.text or "").strip().replace(",", ".")
+        try:
+            mt = float(raw)
+            if mt < 0:
+                raise ValueError
+        except ValueError:
+            await message.answer("Введите корректное число ГБ (или нажмите «Безлимит»):")
+            return
+        await state.update_data(monthly_traffic_gb=mt)
+        await state.set_state(PlanEditState.entering_connections)
+        await message.answer("Введите количество одновременных подключений (например: 1, 3, 5):")
+    except Exception:
+        logger.exception("Ошибка в handle_plan_monthly_traffic")
+        await message.answer("Произошла ошибка.")
+
+
+@router.callback_query(F.data.startswith("plan_mtraffic:"), PlanEditState.entering_monthly_traffic)
+async def handle_plan_mtraffic_choice(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        mt = float(callback.data.split(":")[1])
+        await state.update_data(monthly_traffic_gb=mt)
+        await state.set_state(PlanEditState.entering_connections)
+        await callback.message.edit_text("Введите количество одновременных подключений (например: 1, 3, 5):")
+        await callback.answer()
+    except Exception:
+        logger.exception("Ошибка в handle_plan_mtraffic_choice")
+        await callback.answer("Произошла ошибка.", show_alert=True)
+
+
+@router.message(PlanEditState.entering_connections)
+async def handle_plan_connections(message: Message, state: FSMContext) -> None:
+    try:
+        raw = (message.text or "").strip()
+        if not raw.isdigit() or int(raw) <= 0:
+            await message.answer("Введите целое положительное число:")
+            return
+        await state.update_data(max_connections=int(raw))
         await state.set_state(PlanEditState.entering_description)
         await message.answer("Введите описание тарифа:")
     except Exception:
-        logger.exception("Ошибка в handle_plan_traffic")
+        logger.exception("Ошибка в handle_plan_connections")
         await message.answer("Произошла ошибка.")
 
 
@@ -255,6 +313,8 @@ async def handle_plan_description(message: Message, state: FSMContext, storage_b
             traffic_gb=data["traffic_gb"],
             description=description,
             is_active=True,
+            max_connections=data.get("max_connections", 1),
+            monthly_traffic_gb=data.get("monthly_traffic_gb", 0.0),
         )
         await storage_backend.save_subscription_plan(plan)
 
@@ -305,6 +365,69 @@ async def cb_edit_name(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer("Произошла ошибка.", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("adm_plan:edit_mtraffic:"))
+async def cb_edit_mtraffic(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        plan_id = callback.data.split(":")[2]
+        await state.set_state(PlanEditState.editing_field)
+        await state.update_data(edit_field="monthly_traffic_gb", edit_plan_id=plan_id)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="♾ Безлимит", callback_data=f"adm_plan_edit_val:0:{plan_id}")
+        builder.button(text="◀️ Отмена", callback_data=f"adm_plan:view:{plan_id}")
+        await callback.message.edit_text(
+            "Введите трафик в месяц в ГБ (или нажмите «Безлимит»):",
+            reply_markup=builder.as_markup(),
+        )
+        await callback.answer()
+    except Exception:
+        logger.exception("Ошибка в cb_edit_mtraffic")
+        await callback.answer("Произошла ошибка.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("adm_plan_edit_val:"))
+async def cb_edit_val_choice(callback: CallbackQuery, state: FSMContext, storage_backend: BaseStorage) -> None:
+    try:
+        parts = callback.data.split(":")
+        value = parts[1]
+        plan_id = parts[2]
+        data = await state.get_data()
+        field = data.get("edit_field", "monthly_traffic_gb")
+        await state.clear()
+
+        plan = await storage_backend.get_subscription_plan(plan_id)
+        if plan is None:
+            await callback.answer("Тариф не найден.", show_alert=True)
+            return
+
+        setattr(plan, field, float(value))
+        await storage_backend.save_subscription_plan(plan)
+
+        label = "♾ Безлимит" if float(value) == 0 else f"{float(value):.0f} ГБ"
+        await callback.answer(f"✅ Обновлено: {label}", show_alert=True)
+        await cb_plan_view(callback, storage_backend)
+    except Exception:
+        logger.exception("Ошибка в cb_edit_val_choice")
+        await callback.answer("Произошла ошибка.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("adm_plan:edit_conn:"))
+async def cb_edit_conn(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        plan_id = callback.data.split(":")[2]
+        await state.set_state(PlanEditState.editing_field)
+        await state.update_data(edit_field="max_connections", edit_plan_id=plan_id)
+        builder = InlineKeyboardBuilder()
+        builder.button(text="◀️ Отмена", callback_data=f"adm_plan:view:{plan_id}")
+        await callback.message.edit_text(
+            "Введите количество одновременных подключений:",
+            reply_markup=builder.as_markup(),
+        )
+        await callback.answer()
+    except Exception:
+        logger.exception("Ошибка в cb_edit_conn")
+        await callback.answer("Произошла ошибка.", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("adm_plan:edit_desc:"))
 async def cb_edit_desc(callback: CallbackQuery, state: FSMContext) -> None:
     try:
@@ -344,6 +467,17 @@ async def handle_edit_field(message: Message, state: FSMContext, storage_backend
             plan.name = raw
         elif field == "description":
             plan.description = raw
+        elif field == "monthly_traffic_gb":
+            try:
+                plan.monthly_traffic_gb = float(raw.replace(",", "."))
+            except ValueError:
+                await message.answer("Введите число (0 = безлимит).")
+                return
+        elif field == "max_connections":
+            if not raw.isdigit() or int(raw) <= 0:
+                await message.answer("Введите целое положительное число.")
+                return
+            plan.max_connections = int(raw)
 
         await storage_backend.save_subscription_plan(plan)
 
