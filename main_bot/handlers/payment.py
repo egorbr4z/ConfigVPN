@@ -212,16 +212,26 @@ async def handle_last4_input(message: Message, state: FSMContext, storage_backen
                 (user.full_name if user else str(payment.user_id))
             )
             phone = user.phone if user else "—"
-            product_label = payment.product_details.get(
-                "plan_name",
-                f"Пресет {payment.product_details.get('preset_id', '—')}"
-            )
+            d = payment.product_details
+            if payment.type == "subscription":
+                product_label = (
+                    f"📦 {d.get('plan_name', '—')} "
+                    f"({d.get('duration_days', '?')} дн., {d.get('traffic_gb', '?')} ГБ)"
+                )
+            else:
+                prov_names: list[str] = d.get("provider_names", [])
+                ram = d.get("ram_gb", "?")
+                cpu = d.get("cpu_count", "?")
+                vpn_type_label = "Белый список" if d.get("vpn_type") == "whitelist" else "Обычный"
+                servers_text = "\n".join(f"  • {n} — RAM {ram} ГБ / CPU {cpu}" for n in prov_names) or "  —"
+                product_label = f"🛠 Свой VPN ({vpn_type_label}):\n{servers_text}"
+
             admin_text = (
                 f"💰 *Новый платёж на подтверждение*\n\n"
                 f"Пользователь: {user_info} (ID: `{payment.user_id}`)\n"
                 f"Телефон: {phone}\n"
                 f"Продукт: {product_label}\n"
-                f"Сумма: {payment.amount:.0f} ₽\n"
+                f"Сумма: *{payment.amount:.0f} ₽*\n"
                 f"Последние 4 цифры: `{text}`\n"
                 f"ID платежа: `{payment.id}`\n\n"
                 f"Перейдите в AdminBot → раздел Платежи для подтверждения."

@@ -77,10 +77,10 @@ def kb_subscription_plans(plans: list[SubscriptionPlan]) -> InlineKeyboardMarkup
     return builder.as_markup()
 
 
-def kb_plan_detail(plan_id: str) -> InlineKeyboardMarkup:
+def kb_plan_detail(plan_id: str, plan_type: str = "regular") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Купить", callback_data=f"sub_buy:{plan_id}")
-    builder.button(text="◀️ Назад", callback_data=f"sub_tab:{'whitelist' if 'wl' in plan_id else 'regular'}")
+    builder.button(text="◀️ Назад", callback_data=f"sub_tab:{plan_type}")
     builder.adjust(1)
     return builder.as_markup()
 
