@@ -96,6 +96,9 @@ class BaseStorage(ABC):
     @abstractmethod
     async def get_all_subscriptions(self, active_only: bool = False) -> list[Subscription]: ...
 
+    @abstractmethod
+    async def delete_subscription(self, subscription_id: str) -> None: ...
+
     # Requisites
     @abstractmethod
     async def get_requisites(self, active_only: bool = True) -> list[Requisite]: ...
@@ -353,6 +356,11 @@ class JSONStorage(BaseStorage):
         if active_only:
             subs = [s for s in subs if s.is_active]
         return subs
+
+    async def delete_subscription(self, subscription_id: str) -> None:
+        data = await self._read_subscriptions()
+        data.pop(subscription_id, None)
+        await self._write("subscriptions.json", data)
 
     # ------------------------------------------------------------------
     # Requisites
