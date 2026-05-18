@@ -6,8 +6,10 @@
     "price": 299.0,
     "duration_days": 30,
     "traffic_gb": 100.0,
-    "description": "VPN с белым списком сайтов. Трафик через VPN только для заблокированных ресурсов. 100 ГБ трафика на 30 дней.",
-    "is_active": true
+    "description": "VPN с белым списком сайтов. Трафик через VPN только для заблокированных ресурсов.",
+    "is_active": true,
+    "max_connections": 3,
+    "monthly_traffic_gb": 100.0
   },
   "plan_wl_3month": {
     "id": "plan_wl_3month",
@@ -16,8 +18,10 @@
     "price": 799.0,
     "duration_days": 90,
     "traffic_gb": 300.0,
-    "description": "VPN с белым списком сайтов. 300 ГБ трафика на 90 дней. Выгода 10% по сравнению с месячной подпиской.",
-    "is_active": true
+    "description": "VPN с белым списком сайтов. Выгода 10% по сравнению с месячной подпиской.",
+    "is_active": true,
+    "max_connections": 3,
+    "monthly_traffic_gb": 100.0
   },
   "plan_reg_1month": {
     "id": "plan_reg_1month",
@@ -26,8 +30,10 @@
     "price": 199.0,
     "duration_days": 30,
     "traffic_gb": 150.0,
-    "description": "Обычный VPN — весь трафик через сервер. 150 ГБ трафика на 30 дней.",
-    "is_active": true
+    "description": "Обычный VPN — весь трафик через сервер.",
+    "is_active": true,
+    "max_connections": 1,
+    "monthly_traffic_gb": 0.0
   },
   "plan_reg_3month": {
     "id": "plan_reg_3month",
@@ -36,7 +42,9 @@
     "price": 499.0,
     "duration_days": 90,
     "traffic_gb": 500.0,
-    "description": "Обычный VPN — весь трафик через сервер. 500 ГБ трафика на 90 дней.",
-    "is_active": true
+    "description": "Обычный VPN — весь трафик через сервер. Выгода по сравнению с месячной подпиской.",
+    "is_active": true,
+    "max_connections": 1,
+    "monthly_traffic_gb": 0.0
   }
 }

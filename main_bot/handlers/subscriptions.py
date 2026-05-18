@@ -92,11 +92,15 @@ async def cb_subscription_plan(callback: CallbackQuery, storage_backend: BaseSto
         if plan.duration_days == 90:
             duration_label = "3 месяца"
 
+        traffic_month = "♾ Безлимит" if plan.monthly_traffic_gb == 0 else f"{plan.monthly_traffic_gb:.0f} ГБ"
+        connections = f"{plan.max_connections} уст." if plan.max_connections == 1 else f"{plan.max_connections} уст. одновременно"
+
         text = (
             f"📋 *{plan.name}*\n\n"
             f"Тип: {type_label}\n"
             f"Срок: {duration_label}\n"
-            f"Трафик: {plan.traffic_gb:.0f} ГБ\n"
+            f"Трафик в месяц: {traffic_month}\n"
+            f"Подключений: {connections}\n"
             f"Цена: *{plan.price:.0f} ₽*\n\n"
             f"{plan.description}"
         )

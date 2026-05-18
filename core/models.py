@@ -28,6 +28,8 @@ class SubscriptionPlan:
     traffic_gb: float
     description: str
     is_active: bool
+    max_connections: int = 1          # simultaneous devices
+    monthly_traffic_gb: float = 0.0  # 0 = unlimited
 
 
 @dataclass
