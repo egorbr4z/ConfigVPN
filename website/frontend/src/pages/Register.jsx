@@ -29,6 +29,15 @@ export default function Register() {
     if (ref) setForm(f => ({ ...f, referral_code: ref }))
   }, [searchParams])
 
+  const handlePhoneChange = (e) => {
+    let val = e.target.value.replace(/[^\d+]/g, '')
+    if (val.startsWith('8')) val = '+7' + val.slice(1)
+    if (val && !val.startsWith('+')) val = '+7' + val
+    if (val.length > 12) val = val.slice(0, 12)
+    setForm(f => ({ ...f, phone: val }))
+    if (errors.phone) setErrors(er => ({ ...er, phone: '' }))
+  }
+
   const validate = () => {
     const errs = {}
     if (!form.phone) errs.phone = 'Введите номер телефона'
@@ -97,7 +106,9 @@ export default function Register() {
                   type="tel"
                   className={`input-field pl-10 ${errors.phone ? 'border-red-500 focus:border-red-500' : ''}`}
                   placeholder="+79991234567"
-                  {...field('phone')}
+                  value={form.phone}
+                  onChange={handlePhoneChange}
+                  maxLength={12}
                 />
               </div>
               {errors.phone && <p className="text-red-400 text-xs mt-1">{errors.phone}</p>}
