@@ -7,6 +7,7 @@ import client from '../api/client.js'
 import useAuthStore from '../store/auth.js'
 import ProviderBadge from '../components/ProviderBadge.jsx'
 import AnimatedBackground from '../components/AnimatedBackground.jsx'
+import Navbar from '../components/Navbar.jsx'
 
 const STEPS = ['Тип VPN', 'Провайдеры', 'Конфигурация', 'Итог']
 
@@ -44,9 +45,9 @@ export default function CustomVPN() {
   const [step, setStep] = useState(0)
   const [vpnType, setVpnType] = useState(null)
   const [selectedProviders, setSelectedProviders] = useState([])
-  const [selectedPreset, setSelectedPreset] = useState(null)
+  const [selectedPresets, setSelectedPresets] = useState({}) // { provider_id: preset_id }
   const [providers, setProviders] = useState([])
-  const [presets, setPresets] = useState([])
+  const [providerPresets, setProviderPresets] = useState({}) // { provider_id: [preset, ...] }
   const [loading, setLoading] = useState(false)
   const { isAuthenticated } = useAuthStore()
   const navigate = useNavigate()
@@ -57,13 +58,49 @@ export default function CustomVPN() {
       return
     }
     client.get('/providers').then(r => setProviders(r.data)).catch(() => {})
-    client.get('/providers/presets').then(r => setPresets(r.data)).catch(() => {})
   }, [isAuthenticated])
 
-  const toggleProvider = (id) => {
-    setSelectedProviders(prev =>
-      prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
+  // Load presets for all selected providers when entering step 2
+  const loadPresetsForProviders = async (providerIds) => {
+    const missing = providerIds.filter(pid => !providerPresets[pid])
+    if (missing.length === 0) return
+    const results = await Promise.all(
+      missing.map(pid =>
+        client.get(`/providers/presets?provider_id=${pid}`)
+          .then(r => ({ pid, presets: r.data }))
+          .catch(() => ({ pid, presets: [] }))
+      )
     )
+    const newEntries = {}
+    results.forEach(({ pid, presets }) => { newEntries[pid] = presets })
+    setProviderPresets(prev => ({ ...prev, ...newEntries }))
+  }
+
+  const toggleProvider = (id) => {
+    const provider = providers.find(p => p.id === id)
+    if (!provider) return
+
+    if (vpnType === 'whitelist') {
+      const isRussian = provider.is_russian
+      setSelectedProviders(prev => {
+        if (prev.includes(id)) {
+          // Deselect
+          return prev.filter(p => p !== id)
+        }
+        // Replace existing provider of same type
+        const filtered = prev.filter(pid => {
+          const prov = providers.find(p => p.id === pid)
+          return prov ? prov.is_russian !== isRussian : true
+        })
+        return [...filtered, id]
+      })
+    } else {
+      // regular: max 1 provider
+      setSelectedProviders(prev => {
+        if (prev.includes(id)) return []
+        return [id]
+      })
+    }
   }
 
   const validateStep = () => {
@@ -92,13 +129,21 @@ export default function CustomVPN() {
       }
     }
     if (step === 2) {
-      if (!selectedPreset) { toast.error('Выберите конфигурацию сервера'); return false }
+      const missing = selectedProviders.filter(pid => !selectedPresets[pid])
+      if (missing.length > 0) {
+        toast.error('Выберите конфигурацию для каждого провайдера')
+        return false
+      }
     }
     return true
   }
 
-  const handleNext = () => {
-    if (validateStep()) setStep(s => s + 1)
+  const handleNext = async () => {
+    if (!validateStep()) return
+    if (step === 1) {
+      await loadPresetsForProviders(selectedProviders)
+    }
+    setStep(s => s + 1)
   }
 
   const handleBack = () => setStep(s => s - 1)
@@ -108,7 +153,10 @@ export default function CustomVPN() {
     try {
       const res = await client.post('/payments/initiate', {
         type: 'custom_vpn',
-        preset_id: selectedPreset,
+        provider_presets: selectedProviders.map(pid => ({
+          provider_id: pid,
+          preset_id: selectedPresets[pid],
+        })),
         provider_ids: selectedProviders,
         vpn_type: vpnType,
       })
@@ -120,15 +168,23 @@ export default function CustomVPN() {
     }
   }
 
-  const selectedPresetObj = presets.find(p => p.id === selectedPreset)
   const selectedProviderObjs = providers.filter(p => selectedProviders.includes(p.id))
 
-  const whitelistProviders = providers.filter(p => p.supports_whitelist)
+  // Total price = sum of all selected presets' prices
+  const totalPrice = selectedProviders.reduce((sum, pid) => {
+    const presetId = selectedPresets[pid]
+    if (!presetId) return sum
+    const presets = providerPresets[pid] || []
+    const preset = presets.find(p => p.id === presetId)
+    return sum + (preset ? preset.price : 0)
+  }, 0)
+
   const ruProviders = providers.filter(p => p.is_russian)
   const foreignProviders = providers.filter(p => !p.is_russian)
 
   return (
     <div className="relative min-h-screen pt-24 pb-16">
+      <Navbar />
       <AnimatedBackground />
       <div className="max-w-2xl mx-auto px-4 sm:px-6 relative z-10">
 
@@ -215,7 +271,7 @@ export default function CustomVPN() {
               {vpnType === 'whitelist' && (
                 <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-3 mb-5 text-sm text-yellow-400">
                   <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  Для белых списков нужно выбрать минимум 1 российский и 1 зарубежный провайдер
+                  Для белых списков нужно выбрать 1 российский и 1 зарубежный провайдер
                 </div>
               )}
 
@@ -263,7 +319,7 @@ export default function CustomVPN() {
             </motion.div>
           )}
 
-          {/* Step 2: Presets */}
+          {/* Step 2: Presets per provider */}
           {step === 2 && (
             <motion.div
               key="step2"
@@ -272,42 +328,59 @@ export default function CustomVPN() {
               exit={{ opacity: 0, x: -30 }}
               transition={{ duration: 0.25 }}
             >
-              <h2 className="text-xl font-bold text-white mb-6 text-center">Конфигурация сервера</h2>
-              {presets.length === 0 ? (
-                <div className="text-center text-[#94A3B8] py-8">Нет доступных конфигураций</div>
-              ) : (
-                <div className="space-y-3">
-                  {presets.map(preset => (
-                    <motion.button
-                      key={preset.id}
-                      onClick={() => setSelectedPreset(preset.id)}
-                      whileHover={{ scale: 1.01 }}
-                      whileTap={{ scale: 0.99 }}
-                      className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center justify-between ${
-                        selectedPreset === preset.id
-                          ? 'border-primary bg-primary/10'
-                          : 'border-[#1E1E2E] bg-[#12121A] hover:border-white/10'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-[#0A0A0F] border border-[#1E1E2E] flex items-center justify-center">
-                          <Server className="w-5 h-5 text-primary" />
+              <h2 className="text-xl font-bold text-white mb-6 text-center">Конфигурация серверов</h2>
+              <div className="space-y-6">
+                {selectedProviders.map(pid => {
+                  const provider = providers.find(p => p.id === pid)
+                  const presets = providerPresets[pid] || []
+                  const chosenPresetId = selectedPresets[pid] || null
+
+                  return (
+                    <div key={pid}>
+                      <h3 className="text-sm font-semibold text-[#E2E8F0] mb-3 flex items-center gap-2">
+                        {provider?.is_russian ? '🇷🇺' : '🌍'}
+                        {provider?.name}
+                        <span className="text-[#94A3B8] font-normal">— {provider?.location}</span>
+                      </h3>
+                      {presets.length === 0 ? (
+                        <div className="text-center text-[#94A3B8] py-4 text-sm">Нет доступных конфигураций</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {presets.map(preset => (
+                            <motion.button
+                              key={preset.id}
+                              onClick={() => setSelectedPresets(prev => ({ ...prev, [pid]: preset.id }))}
+                              whileHover={{ scale: 1.01 }}
+                              whileTap={{ scale: 0.99 }}
+                              className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center justify-between ${
+                                chosenPresetId === preset.id
+                                  ? 'border-primary bg-primary/10'
+                                  : 'border-[#1E1E2E] bg-[#12121A] hover:border-white/10'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-[#0A0A0F] border border-[#1E1E2E] flex items-center justify-center">
+                                  <Server className="w-5 h-5 text-primary" />
+                                </div>
+                                <div>
+                                  <div className="text-white font-medium text-sm">
+                                    {preset.ram_gb} ГБ RAM / {preset.cpu_count} vCPU
+                                  </div>
+                                  <div className="text-[#94A3B8] text-xs mt-0.5">Виртуальный сервер</div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-lg font-bold gradient-text selectable">{preset.price}₽</div>
+                                <div className="text-[#94A3B8] text-xs">в месяц</div>
+                              </div>
+                            </motion.button>
+                          ))}
                         </div>
-                        <div>
-                          <div className="text-white font-medium text-sm">
-                            {preset.ram_gb} ГБ RAM / {preset.cpu_count} vCPU
-                          </div>
-                          <div className="text-[#94A3B8] text-xs mt-0.5">Виртуальный сервер</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-lg font-bold gradient-text selectable">{preset.price}₽</div>
-                        <div className="text-[#94A3B8] text-xs">в месяц</div>
-                      </div>
-                    </motion.button>
-                  ))}
-                </div>
-              )}
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </motion.div>
           )}
 
@@ -329,29 +402,37 @@ export default function CustomVPN() {
                   </span>
                 </div>
                 <div className="py-3 border-b border-[#1E1E2E]">
-                  <span className="text-[#94A3B8] block mb-2">Провайдеры</span>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedProviderObjs.map(p => (
-                      <span key={p.id} className="badge bg-primary/10 text-purple-300 border border-primary/20">
-                        {p.name}
-                      </span>
-                    ))}
+                  <span className="text-[#94A3B8] block mb-3">Провайдеры и конфигурации</span>
+                  <div className="space-y-2">
+                    {selectedProviders.map(pid => {
+                      const provider = providers.find(p => p.id === pid)
+                      const presetId = selectedPresets[pid]
+                      const presets = providerPresets[pid] || []
+                      const preset = presets.find(p => p.id === presetId)
+                      return (
+                        <div key={pid} className="flex items-center justify-between bg-[#0A0A0F]/50 rounded-xl p-3 border border-[#1E1E2E]">
+                          <div>
+                            <div className="text-white text-sm font-medium">
+                              {provider?.is_russian ? '🇷🇺' : '🌍'} {provider?.name}
+                            </div>
+                            {preset && (
+                              <div className="text-[#94A3B8] text-xs mt-0.5">
+                                {preset.ram_gb} ГБ RAM / {preset.cpu_count} vCPU
+                              </div>
+                            )}
+                          </div>
+                          {preset && (
+                            <span className="text-white font-medium text-sm selectable">{preset.price}₽/мес</span>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
-                {selectedPresetObj && (
-                  <>
-                    <div className="flex justify-between items-center py-3 border-b border-[#1E1E2E]">
-                      <span className="text-[#94A3B8]">Конфигурация</span>
-                      <span className="text-white font-medium">
-                        {selectedPresetObj.ram_gb} ГБ / {selectedPresetObj.cpu_count} vCPU
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center py-3">
-                      <span className="text-[#94A3B8] font-semibold">Итого</span>
-                      <span className="text-2xl font-bold gradient-text selectable">{selectedPresetObj.price}₽/мес</span>
-                    </div>
-                  </>
-                )}
+                <div className="flex justify-between items-center py-3">
+                  <span className="text-[#94A3B8] font-semibold">Итого</span>
+                  <span className="text-2xl font-bold gradient-text selectable">{totalPrice}₽/мес</span>
+                </div>
               </div>
             </motion.div>
           )}

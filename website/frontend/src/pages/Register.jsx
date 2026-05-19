@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import client from '../api/client.js'
 import useAuthStore from '../store/auth.js'
 import AnimatedBackground from '../components/AnimatedBackground.jsx'
+import Navbar from '../components/Navbar.jsx'
 
 const PAGE_TRANSITION = {
   initial: { opacity: 0, y: 20 },
@@ -85,6 +86,7 @@ export default function Register() {
 
   return (
     <motion.div {...PAGE_TRANSITION} className="relative min-h-screen flex items-center justify-center px-4 py-20">
+      <Navbar />
       <AnimatedBackground />
       <div className="w-full max-w-md relative z-10">
         <div className="text-center mb-8">

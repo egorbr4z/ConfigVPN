@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import client from '../api/client.js'
 import useAuthStore from '../store/auth.js'
 import AnimatedBackground from '../components/AnimatedBackground.jsx'
+import Navbar from '../components/Navbar.jsx'
 
 export default function Login() {
   const [form, setForm] = useState({ phone: '', password: '' })
@@ -43,6 +44,7 @@ export default function Login() {
 
   return (
     <div className="relative min-h-screen flex items-center justify-center px-4 pt-16">
+      <Navbar />
       <AnimatedBackground />
       <motion.div
         initial={{ opacity: 0, y: 30 }}

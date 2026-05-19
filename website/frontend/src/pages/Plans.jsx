@@ -7,6 +7,7 @@ import client from '../api/client.js'
 import useAuthStore from '../store/auth.js'
 import PlanCard from '../components/PlanCard.jsx'
 import AnimatedBackground from '../components/AnimatedBackground.jsx'
+import Navbar from '../components/Navbar.jsx'
 
 function BuyModal({ plan, onClose, onSuccess }) {
   const [loading, setLoading] = useState(false)
@@ -144,6 +145,7 @@ export default function Plans() {
 
   return (
     <div className="relative min-h-screen pt-24 pb-16">
+      <Navbar />
       <AnimatedBackground />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
