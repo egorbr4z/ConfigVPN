@@ -106,7 +106,13 @@ function PaymentRow({ payment, onUpdate }) {
 
   const done = () => { setConfirmModal(false); setRejectModal(false); onUpdate() }
   const d = payment.product_details || {}
-  const productLabel = d.plan_name || (d.provider_names?.join(', ') ? `Свой VPN: ${d.provider_names.join(', ')}` : '—')
+  const isCustomVPN = payment.type === 'custom_vpn'
+  const vpnTypeLabel = d.vpn_type === 'whitelist' ? 'Белый список' : 'Обычный'
+  const productLabel = d.plan_name
+    ? d.plan_name
+    : isCustomVPN
+      ? `Свой VPN (${vpnTypeLabel})`
+      : '—'
 
   return (
     <>
@@ -140,8 +146,24 @@ function PaymentRow({ payment, onUpdate }) {
                   <div><div className="text-[#94A3B8] text-xs mb-1">Польз. ID</div><div>{payment.user_id}</div></div>
                   <div><div className="text-[#94A3B8] text-xs mb-1">Последние 4</div><div className="font-mono">{payment.last4 || '—'}</div></div>
                   <div><div className="text-[#94A3B8] text-xs mb-1">Продукт</div><div>{productLabel}</div></div>
-                  {d.ram_gb && <div><div className="text-[#94A3B8] text-xs mb-1">Пресет</div><div>RAM {d.ram_gb} ГБ / CPU {d.cpu_count}</div></div>}
+                  {d.ram_gb && <div><div className="text-[#94A3B8] text-xs mb-1">Конфиг</div><div>{d.ram_gb} ГБ RAM / {d.cpu_count} vCPU</div></div>}
                 </div>
+
+                {d.provider_presets?.length > 0 && (
+                  <div className="bg-[#0A0A0F]/60 rounded-xl p-3 space-y-2">
+                    <div className="text-[#94A3B8] text-xs font-medium mb-2">Серверы заказа</div>
+                    {d.provider_presets.map((pp, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm">
+                        <span className="text-white font-medium">{pp.provider_name}</span>
+                        <span className="text-[#94A3B8]">{pp.ram_gb} ГБ RAM / {pp.cpu_count} vCPU — <span className="text-white">{pp.price} ₽/мес</span></span>
+                      </div>
+                    ))}
+                    <div className="border-t border-[#1E1E2E] pt-2 flex justify-between text-sm font-semibold">
+                      <span className="text-[#94A3B8]">Итого</span>
+                      <span className="text-white">{payment.amount} ₽/мес</span>
+                    </div>
+                  </div>
+                )}
 
                 {payment.status === 'pending' && (
                   <div className="flex gap-2 pt-1">

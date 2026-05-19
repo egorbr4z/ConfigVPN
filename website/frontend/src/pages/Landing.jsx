@@ -34,6 +34,10 @@ const faqs = [
     a: 'Весь интернет-трафик идёт через VPN-сервер. Российские сайты работают через сервер, что может немного снижать скорость. Зато дешевле и подходит для тех, кто хочет полную анонимность или доступ к зарубежным сервисам без исключений.',
   },
   {
+    q: 'В чём преимущества тарифа «Свой VPN сервер»?',
+    a: 'Вы получаете выделенный виртуальный сервер — на нём нет посторонних пользователей, а значит никто не делит с вами ресурсы и пропускную способность. Трафик не ограничен: никаких лимитов на гигабайты. Количество одновременно подключённых устройств зависит только от выбранной конфигурации сервера: чем мощнее железо (CPU и RAM), тем больше устройств можно подключить без потери скорости. Доступ к панелям управления провайдеров вы получаете лично — полный контроль над сервером.',
+  },
+  {
     q: 'Как происходит оплата?',
     a: 'Вы переводите сумму на карту или номер телефона (СБП), которые выдаются случайным образом. После перевода вводите последние 4 цифры карты/номера телефона, с которого платили. Администратор проверяет платёж вручную — обычно в течение 30 минут.',
   },
@@ -99,15 +103,20 @@ function StatsSection() {
   const speed = useCountUp(1000, 2000, visible)
 
   return (
-    <div ref={ref} className="grid grid-cols-3 gap-6 text-center">
+    <div ref={ref} className="grid grid-cols-3 gap-4 text-center">
       {[
         { value: `${users.toLocaleString()}+`, label: 'Пользователей' },
         { value: `${uptime}%`, label: 'Аптайм' },
-        { value: `${speed} Мбит/с`, label: 'Скорость' },
+        { value: `${speed}+`, label: 'Мбит/с' },
       ].map((stat, i) => (
-        <div key={i}>
-          <div className="text-3xl md:text-4xl font-bold gradient-text">{stat.value}</div>
-          <div className="text-[#94A3B8] text-sm mt-1">{stat.label}</div>
+        <div key={i} className="flex flex-col items-center">
+          <div
+            className="text-2xl sm:text-3xl md:text-4xl font-bold gradient-text tabular-nums whitespace-nowrap leading-none"
+            style={{ minHeight: '1.2em' }}
+          >
+            {stat.value}
+          </div>
+          <div className="text-[#94A3B8] text-xs sm:text-sm mt-1 whitespace-nowrap">{stat.label}</div>
         </div>
       ))}
     </div>
