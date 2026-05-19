@@ -70,9 +70,11 @@ async def initiate_payment(
                 preset = await storage.get_preset(pp.preset_id)
                 if not preset or not preset.is_active:
                     raise HTTPException(status_code=404, detail=f"Пресет {pp.preset_id} не найден")
+                provider = await storage.get_provider(pp.provider_id)
                 amount += preset.price
                 resolved.append({
                     "provider_id": pp.provider_id,
+                    "provider_name": provider.name if provider else pp.provider_id,
                     "preset_id": preset.id,
                     "ram_gb": preset.ram_gb,
                     "cpu_count": preset.cpu_count,
