@@ -74,33 +74,21 @@ async def cb_account(callback: CallbackQuery, storage_backend: BaseStorage, user
 @router.callback_query(F.data == "account:subscriptions")
 async def cb_account_subscriptions(callback: CallbackQuery, storage_backend: BaseStorage, user: User) -> None:
     try:
-        all_subs = await storage_backend.get_user_subscriptions(user.telegram_id, active_only=False)
-        active_subs = [s for s in all_subs if s.is_active]
-        inactive_subs = [s for s in all_subs if not s.is_active]
+        active_subs = await storage_backend.get_user_subscriptions(user.telegram_id, active_only=True)
 
         has_configs = any(s.subscription_url is not None for s in active_subs)
 
-        if not all_subs:
+        if not active_subs:
             text = (
                 "📋 *Мои подписки*\n\n"
-                "У вас пока нет подписок.\n"
+                "У вас пока нет активных подписок.\n"
                 "Перейдите в раздел «Готовые VPN подписки» или «Собрать свой VPN»."
             )
         else:
             lines = ["📋 *Мои подписки*\n"]
-
-            if active_subs:
-                lines.append("*Активные:*")
-                for sub in active_subs:
-                    lines.append(_format_subscription(sub))
-                    lines.append("")
-
-            if inactive_subs:
-                lines.append("*Неактивные:*")
-                for sub in inactive_subs[:3]:  # Show last 3 inactive
-                    lines.append(_format_subscription(sub))
-                    lines.append("")
-
+            for sub in active_subs:
+                lines.append(_format_subscription(sub))
+                lines.append("")
             text = "\n".join(lines).strip()
 
         await callback.message.edit_text(

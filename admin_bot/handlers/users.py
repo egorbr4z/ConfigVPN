@@ -316,11 +316,24 @@ async def cb_sub_deactivate(callback: CallbackQuery, storage_backend: BaseStorag
             await callback.answer("Подписка не найдена.", show_alert=True)
             return
 
-        sub.is_active = False
-        await storage_backend.save_subscription(sub)
-        await callback.answer("✅ Подписка деактивирована.", show_alert=True)
-        # Re-show
-        await cb_sub_view(callback, storage_backend)
+        user_id = sub.user_id
+        await storage_backend.delete_subscription(sub_id)
+        await callback.answer("✅ Подписка удалена.", show_alert=True)
+
+        subs = await storage_backend.get_user_subscriptions(user_id, active_only=False)
+        builder = InlineKeyboardBuilder()
+        for s in subs:
+            type_label = "WL" if s.type == "whitelist" else "REG"
+            builder.button(
+                text=f"✅ [{type_label}] {s.id[:8]}...",
+                callback_data=f"adm_sub_mgmt:view:{s.id}",
+            )
+        builder.button(text="◀️ Назад", callback_data=f"adm_usr:view:{user_id}")
+        builder.adjust(1)
+        await callback.message.edit_text(
+            f"📋 *Подписки пользователя `{user_id}`*\n\nВсего: {len(subs)}",
+            reply_markup=builder.as_markup(),
+        )
     except Exception:
         logger.exception("Ошибка в cb_sub_deactivate")
         await callback.answer("Произошла ошибка.", show_alert=True)
