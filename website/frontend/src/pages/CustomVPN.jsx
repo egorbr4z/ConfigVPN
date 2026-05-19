@@ -301,7 +301,7 @@ export default function CustomVPN() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-lg font-bold gradient-text">{preset.price}₽</div>
+                        <div className="text-lg font-bold gradient-text selectable">{preset.price}₽</div>
                         <div className="text-[#94A3B8] text-xs">в месяц</div>
                       </div>
                     </motion.button>
@@ -348,7 +348,7 @@ export default function CustomVPN() {
                     </div>
                     <div className="flex justify-between items-center py-3">
                       <span className="text-[#94A3B8] font-semibold">Итого</span>
-                      <span className="text-2xl font-bold gradient-text">{selectedPresetObj.price}₽/мес</span>
+                      <span className="text-2xl font-bold gradient-text selectable">{selectedPresetObj.price}₽/мес</span>
                     </div>
                   </>
                 )}

@@ -52,17 +52,17 @@ export default function PlanCard({ plan, index = 0, featured = false }) {
         {isWhitelist ? 'Белый список' : 'Обычный VPN'}
       </div>
 
-      <h3 className="text-xl font-bold text-white mb-2">{plan.name}</h3>
-      <p className="text-[#94A3B8] text-sm mb-6 leading-relaxed">{plan.description}</p>
+      <h3 className="text-xl font-bold text-white mb-2 selectable">{plan.name}</h3>
+      <p className="text-[#94A3B8] text-sm mb-6 leading-relaxed selectable">{plan.description}</p>
 
       {/* Price */}
-      <div className="mb-6">
+      <div className="mb-6 selectable">
         <span className="text-4xl font-bold gradient-text">{plan.price}₽</span>
         <span className="text-[#94A3B8] text-sm ml-2">/ {plan.duration_days} дней</span>
       </div>
 
       {/* Features */}
-      <ul className="space-y-3 mb-6">
+      <ul className="space-y-3 mb-6 selectable">
         <li className="flex items-center gap-2 text-sm text-[#E2E8F0]">
           <Wifi className="w-4 h-4 text-primary flex-shrink-0" />
           <span>Трафик: {formatTraffic(plan.traffic_gb)}</span>

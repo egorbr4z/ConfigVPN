@@ -14,6 +14,14 @@ export default function Login() {
   const { login } = useAuthStore()
   const navigate = useNavigate()
 
+  const handlePhoneChange = (e) => {
+    let val = e.target.value.replace(/[^\d+]/g, '')
+    if (val.startsWith('8')) val = '+7' + val.slice(1)
+    if (val && !val.startsWith('+')) val = '+7' + val
+    if (val.length > 12) val = val.slice(0, 12)
+    setForm({ ...form, phone: val })
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!form.phone || !form.password) {
@@ -62,7 +70,8 @@ export default function Login() {
                   className="input-field pl-10"
                   placeholder="+7 999 000 00 00"
                   value={form.phone}
-                  onChange={e => setForm({ ...form, phone: e.target.value })}
+                  onChange={handlePhoneChange}
+                  maxLength={12}
                 />
               </div>
             </div>

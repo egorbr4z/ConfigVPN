@@ -51,7 +51,7 @@ function BuyModal({ plan, onClose, onSuccess }) {
           </button>
         </div>
 
-        <div className="bg-[#0A0A0F]/50 rounded-xl p-4 mb-6 border border-[#1E1E2E]">
+        <div className="bg-[#0A0A0F]/50 rounded-xl p-4 mb-6 border border-[#1E1E2E] selectable">
           <div className="flex justify-between items-center">
             <span className="text-[#94A3B8]">Стоимость</span>
             <span className="text-2xl font-bold gradient-text">{plan.price}₽</span>

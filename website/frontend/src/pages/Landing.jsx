@@ -60,7 +60,7 @@ function FAQItem({ item, index }) {
         onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-white/2 transition-colors"
       >
-        <span className="font-medium text-[#E2E8F0] pr-4">{item.q}</span>
+        <span className="font-medium text-[#E2E8F0] pr-4 selectable">{item.q}</span>
         {open ? (
           <ChevronUp className="w-4 h-4 text-[#94A3B8] flex-shrink-0" />
         ) : (
@@ -75,7 +75,7 @@ function FAQItem({ item, index }) {
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.25 }}
           >
-            <div className="px-6 pb-4 text-[#94A3B8] text-sm leading-relaxed border-t border-[#1E1E2E] pt-4">
+            <div className="px-6 pb-4 text-[#94A3B8] text-sm leading-relaxed border-t border-[#1E1E2E] pt-4 selectable">
               {item.a}
             </div>
           </motion.div>
