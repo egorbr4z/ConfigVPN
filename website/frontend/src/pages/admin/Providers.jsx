@@ -130,9 +130,8 @@ function PresetModal({ providerId, preset, onClose, onSave }) {
   )
 }
 
-function ProviderRow({ provider, allPresets, onToggle, onDelete, onPresetsChange }) {
+function ProviderRow({ provider, allPresets, onToggle, onDelete, onPresetsChange, onOpenPresetModal }) {
   const [expanded, setExpanded] = useState(false)
-  const [presetModal, setPresetModal] = useState(null) // null | 'new' | preset object
 
   const presets = allPresets.filter(p => p.provider_id === provider.id)
 
@@ -143,17 +142,6 @@ function ProviderRow({ provider, allPresets, onToggle, onDelete, onPresetsChange
 
   return (
     <>
-      <AnimatePresence>
-        {presetModal && (
-          <PresetModal
-            providerId={provider.id}
-            preset={presetModal === 'new' ? null : presetModal}
-            onClose={() => setPresetModal(null)}
-            onSave={() => { setPresetModal(null); onPresetsChange() }}
-          />
-        )}
-      </AnimatePresence>
-
       <tr className="hover:bg-[#1E1E2E]/40 transition-colors border-b border-[#1E1E2E]">
         <td className="p-3">
           <button onClick={() => setExpanded(v => !v)} className="text-[#94A3B8] hover:text-white transition-colors">
@@ -183,61 +171,53 @@ function ProviderRow({ provider, allPresets, onToggle, onDelete, onPresetsChange
         </td>
       </tr>
 
-      <AnimatePresence>
-        {expanded && (
-          <tr>
-            <td colSpan={8} className="bg-[#0A0A0F]/60 border-b border-[#1E1E2E]">
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }}
-                className="px-6 py-4"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-medium text-[#94A3B8] flex items-center gap-2">
-                    <Server size={14} /> Конфигурации сервера
-                  </span>
-                  <button
-                    onClick={() => setPresetModal('new')}
-                    className="btn-primary flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
-                  >
-                    <Plus size={13} /> Добавить
-                  </button>
-                </div>
+      {expanded && (
+        <tr>
+          <td colSpan={8} className="bg-[#0A0A0F]/60 border-b border-[#1E1E2E]">
+            <div className="px-6 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-medium text-[#94A3B8] flex items-center gap-2">
+                  <Server size={14} /> Конфигурации сервера
+                </span>
+                <button
+                  onClick={() => onOpenPresetModal(provider.id, null)}
+                  className="btn-primary flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold"
+                >
+                  <Plus size={13} /> Добавить
+                </button>
+              </div>
 
-                {presets.length === 0 ? (
-                  <p className="text-[#94A3B8] text-xs py-2">Нет конфигураций — добавьте первую</p>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {presets.map(preset => (
-                      <div key={preset.id} className="flex items-center justify-between p-3 rounded-xl bg-[#12121A] border border-[#1E1E2E]">
-                        <div>
-                          <div className="text-sm font-medium text-white">
-                            {preset.ram_gb} ГБ RAM / {preset.cpu_count} vCPU
-                          </div>
-                          <div className="text-xs text-[#94A3B8] mt-0.5">
-                            {preset.price}₽/мес
-                            {!preset.is_active && <span className="ml-2 text-yellow-500">• откл.</span>}
-                          </div>
+              {presets.length === 0 ? (
+                <p className="text-[#94A3B8] text-xs py-2">Нет конфигураций — добавьте первую</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {presets.map(preset => (
+                    <div key={preset.id} className="flex items-center justify-between p-3 rounded-xl bg-[#12121A] border border-[#1E1E2E]">
+                      <div>
+                        <div className="text-sm font-medium text-white">
+                          {preset.ram_gb} ГБ RAM / {preset.cpu_count} vCPU
                         </div>
-                        <div className="flex items-center gap-2 ml-3">
-                          <button onClick={() => setPresetModal(preset)} className="text-[#94A3B8] hover:text-white transition-colors">
-                            <Pencil size={13} />
-                          </button>
-                          <button onClick={() => deletePreset(preset.id)} className="text-[#94A3B8] hover:text-red-400 transition-colors">
-                            <Trash2 size={13} />
-                          </button>
+                        <div className="text-xs text-[#94A3B8] mt-0.5">
+                          {preset.price}₽/мес
+                          {!preset.is_active && <span className="ml-2 text-yellow-500">• откл.</span>}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </motion.div>
-            </td>
-          </tr>
-        )}
-      </AnimatePresence>
+                      <div className="flex items-center gap-2 ml-3">
+                        <button onClick={() => onOpenPresetModal(provider.id, preset)} className="text-[#94A3B8] hover:text-white transition-colors">
+                          <Pencil size={13} />
+                        </button>
+                        <button onClick={() => deletePreset(preset.id)} className="text-[#94A3B8] hover:text-red-400 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
     </>
   )
 }
@@ -245,7 +225,9 @@ function ProviderRow({ provider, allPresets, onToggle, onDelete, onPresetsChange
 export default function AdminProviders() {
   const [providers, setProviders] = useState([])
   const [allPresets, setAllPresets] = useState([])
-  const [modal, setModal] = useState(false)
+  const [providerModal, setProviderModal] = useState(false)
+  // presetModal: null | { providerId, preset (null = new) }
+  const [presetModal, setPresetModal] = useState(null)
 
   const loadProviders = async () => {
     try { const r = await adminClient.get('/admin/providers'); setProviders(r.data) } catch {}
@@ -266,13 +248,33 @@ export default function AdminProviders() {
     try { await adminClient.delete(`/admin/providers/${id}`); toast.success('Удалён'); loadProviders() } catch { toast.error('Ошибка') }
   }
 
+  const openPresetModal = (providerId, preset) => setPresetModal({ providerId, preset })
+
   return (
     <div>
-      <AnimatePresence>{modal && <ProviderModal onClose={() => setModal(false)} onSave={() => { setModal(false); loadProviders() }} />}</AnimatePresence>
+      {/* Modals rendered OUTSIDE the table to avoid invalid HTML nesting */}
+      <AnimatePresence>
+        {providerModal && (
+          <ProviderModal
+            onClose={() => setProviderModal(false)}
+            onSave={() => { setProviderModal(false); loadProviders() }}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {presetModal && (
+          <PresetModal
+            providerId={presetModal.providerId}
+            preset={presetModal.preset}
+            onClose={() => setPresetModal(null)}
+            onSave={() => { setPresetModal(null); loadPresets() }}
+          />
+        )}
+      </AnimatePresence>
 
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Провайдеры</h1>
-        <button onClick={() => setModal(true)} className="btn-primary flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold">
+        <button onClick={() => setProviderModal(true)} className="btn-primary flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold">
           <Plus size={16} /> Добавить
         </button>
       </div>
@@ -292,7 +294,7 @@ export default function AdminProviders() {
             </tr>
           </thead>
           <tbody>
-            {providers.map((p, i) => (
+            {providers.map(p => (
               <ProviderRow
                 key={p.id}
                 provider={p}
@@ -300,6 +302,7 @@ export default function AdminProviders() {
                 onToggle={toggle}
                 onDelete={del}
                 onPresetsChange={loadPresets}
+                onOpenPresetModal={openPresetModal}
               />
             ))}
           </tbody>
