@@ -26,6 +26,15 @@ class PlanBody(BaseModel):
     monthly_traffic_gb: float = 0.0
 
 
+class PlanPatch(BaseModel):
+    name: str | None = None
+    price: float | None = None
+    description: str | None = None
+    is_active: bool | None = None
+    max_connections: int | None = None
+    monthly_traffic_gb: float | None = None
+
+
 @router.get("/plans")
 async def list_plans(
     request: Request,
@@ -56,6 +65,27 @@ async def create_plan(
         max_connections=body.max_connections,
         monthly_traffic_gb=body.monthly_traffic_gb,
     )
+    await storage.save_subscription_plan(plan)
+    return plan.__dict__
+
+
+@router.patch("/plans/{plan_id}")
+async def patch_plan(
+    plan_id: str,
+    body: PlanPatch,
+    request: Request,
+    _: Annotated[dict, Depends(get_current_admin)],
+):
+    storage: JSONStorage = request.app.state.storage
+    plan = await storage.get_subscription_plan(plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Тариф не найден")
+    if body.name is not None: plan.name = body.name
+    if body.price is not None: plan.price = body.price
+    if body.description is not None: plan.description = body.description
+    if body.is_active is not None: plan.is_active = body.is_active
+    if body.max_connections is not None: plan.max_connections = body.max_connections
+    if body.monthly_traffic_gb is not None: plan.monthly_traffic_gb = body.monthly_traffic_gb
     await storage.save_subscription_plan(plan)
     return plan.__dict__
 

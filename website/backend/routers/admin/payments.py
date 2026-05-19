@@ -48,7 +48,7 @@ async def list_payments(
         item["user_name"] = user.full_name if user else "—"
         result.append(item)
 
-    return {"total": total, "page": page, "per_page": per_page, "payments": result}
+    return {"total": total, "page": page, "per_page": per_page, "items": result}
 
 
 @router.get("/payments/{payment_id}")

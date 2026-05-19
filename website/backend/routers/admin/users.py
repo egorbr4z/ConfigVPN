@@ -15,6 +15,7 @@ router = APIRouter()
 class PatchUserBody(BaseModel):
     is_blocked: bool | None = None
     bonus_gb: float | None = None
+    add_bonus_gb: float | None = None
     full_name: str | None = None
 
 
@@ -65,7 +66,7 @@ async def list_users(
         "total": total,
         "page": page,
         "per_page": per_page,
-        "users": [u.__dict__ for u in page_users],
+        "items": [u.__dict__ for u in page_users],
     }
 
 
@@ -106,6 +107,8 @@ async def patch_user(
         user.is_blocked = body.is_blocked
     if body.bonus_gb is not None:
         user.bonus_gb = body.bonus_gb
+    if body.add_bonus_gb is not None:
+        user.bonus_gb += body.add_bonus_gb
     if body.full_name is not None:
         user.full_name = body.full_name
 
