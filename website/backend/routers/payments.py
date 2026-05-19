@@ -16,10 +16,16 @@ from dependencies import get_current_user
 router = APIRouter()
 
 
+class ProviderPresetItem(BaseModel):
+    provider_id: str
+    preset_id: str
+
+
 class InitiatePaymentBody(BaseModel):
     type: str  # "subscription" or "custom_vpn"
     plan_id: str | None = None
-    preset_id: str | None = None
+    preset_id: str | None = None          # legacy single-preset
+    provider_presets: list[ProviderPresetItem] | None = None  # per-provider presets
     provider_ids: list[str] | None = None
     vpn_type: str | None = None  # "whitelist" or "regular"
 
@@ -56,21 +62,44 @@ async def initiate_payment(
             "type": plan.type,
         }
     elif body.type == "custom_vpn":
-        if not body.preset_id:
-            raise HTTPException(status_code=400, detail="Требуется preset_id")
-        preset = await storage.get_preset(body.preset_id)
-        if not preset or not preset.is_active:
-            raise HTTPException(status_code=404, detail="Пресет не найден")
-        amount = preset.price
-        product_ref = preset.id
         provider_ids = body.provider_ids or []
-        product_details = {
-            "preset_id": preset.id,
-            "provider_ids": provider_ids,
-            "vpn_type": body.vpn_type or "regular",
-            "ram_gb": preset.ram_gb,
-            "cpu_count": preset.cpu_count,
-        }
+        if body.provider_presets:
+            # New per-provider preset model
+            resolved = []
+            for pp in body.provider_presets:
+                preset = await storage.get_preset(pp.preset_id)
+                if not preset or not preset.is_active:
+                    raise HTTPException(status_code=404, detail=f"Пресет {pp.preset_id} не найден")
+                amount += preset.price
+                resolved.append({
+                    "provider_id": pp.provider_id,
+                    "preset_id": preset.id,
+                    "ram_gb": preset.ram_gb,
+                    "cpu_count": preset.cpu_count,
+                    "price": preset.price,
+                })
+            product_ref = body.provider_presets[0].preset_id
+            product_details = {
+                "provider_presets": resolved,
+                "provider_ids": provider_ids,
+                "vpn_type": body.vpn_type or "regular",
+            }
+        elif body.preset_id:
+            # Legacy single-preset fallback
+            preset = await storage.get_preset(body.preset_id)
+            if not preset or not preset.is_active:
+                raise HTTPException(status_code=404, detail="Пресет не найден")
+            amount = preset.price
+            product_ref = preset.id
+            product_details = {
+                "preset_id": preset.id,
+                "provider_ids": provider_ids,
+                "vpn_type": body.vpn_type or "regular",
+                "ram_gb": preset.ram_gb,
+                "cpu_count": preset.cpu_count,
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Требуется preset_id или provider_presets")
     else:
         raise HTTPException(status_code=400, detail="Неверный тип платежа")
 

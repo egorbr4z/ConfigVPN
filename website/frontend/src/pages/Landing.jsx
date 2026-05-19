@@ -5,6 +5,7 @@ import { Shield, Zap, Eye, ChevronDown, ChevronUp, ArrowRight, Users, Lock, Glob
 import AnimatedBackground from '../components/AnimatedBackground.jsx'
 import ScrollReveal from '../components/ScrollReveal.jsx'
 import PlanCard from '../components/PlanCard.jsx'
+import Navbar from '../components/Navbar.jsx'
 import client from '../api/client.js'
 
 function useCountUp(target, duration = 2000, isVisible) {
@@ -125,6 +126,7 @@ export default function Landing() {
 
   return (
     <div className="relative">
+      <Navbar />
       <AnimatedBackground />
 
       {/* Hero */}
