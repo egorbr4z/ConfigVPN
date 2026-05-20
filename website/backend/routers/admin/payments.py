@@ -135,18 +135,29 @@ async def confirm_payment(
 
     await storage.save_subscription(sub)
 
-    # Apply referral bonus if first purchase
+    # Apply referral bonus on first confirmed purchase
     user = await storage.get_user(payment.user_id)
     if user and user.referred_by:
-        referrer = await storage.get_referral_by_code(user.referred_by)
-        if referrer:
-            # Check if this is first confirmed payment
-            user_payments = await storage.get_user_payments(payment.user_id)
-            confirmed = [p for p in user_payments if p.status == "confirmed"]
-            if len(confirmed) == 1:
+        referral_record = await storage.get_referral_by_referred(payment.user_id)
+        if referral_record and not referral_record.bonus_applied:
+            # New flow: use Referral record with bonus_applied flag
+            referrer = await storage.get_user(referral_record.referrer_id)
+            if referrer:
                 settings = await storage.get_settings()
                 referrer.bonus_gb += settings.referral_bonus_gb
                 await storage.save_user(referrer)
+                referral_record.bonus_applied = True
+                await storage.save_referral(referral_record)
+        elif not referral_record:
+            # Fallback for users registered before Referral records were introduced
+            referrer = await storage.get_referral_by_code(user.referred_by)
+            if referrer:
+                user_payments = await storage.get_user_payments(payment.user_id)
+                confirmed = [p for p in user_payments if p.status == "confirmed"]
+                if len(confirmed) == 1:
+                    settings = await storage.get_settings()
+                    referrer.bonus_gb += settings.referral_bonus_gb
+                    await storage.save_user(referrer)
 
     return {"status": "confirmed", "subscription_id": sub_id}
 

@@ -18,7 +18,18 @@ client.interceptors.request.use((config) => {
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const status = err.response?.status
+    const detail = err.response?.data?.detail || ''
+
+    if (status === 403 && detail.includes('заблокирован')) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      sessionStorage.setItem('authError', 'Ваш аккаунт заблокирован администратором')
+      window.location.href = '/login'
+      return Promise.reject(err)
+    }
+
+    if (status === 401) {
       const isAdmin = window.location.pathname.startsWith('/admin')
       if (!isAdmin) {
         localStorage.removeItem('token')

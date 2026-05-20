@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Copy, Check, User, CreditCard, Gift, Plus, ExternalLink } from 'lucide-react'
+import { Copy, Check, User, CreditCard, Gift, Plus, ExternalLink, Ban } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Navbar from '../components/Navbar.jsx'
 import Footer from '../components/Footer.jsx'
@@ -59,7 +59,8 @@ function formatDate(iso) {
 }
 
 export default function Account() {
-  const { user } = useAuthStore()
+  const { user, logout } = useAuthStore()
+  const [isBanned, setIsBanned] = useState(false)
   const [subscriptions, setSubscriptions] = useState([])
   const [referral, setReferral] = useState(null)
   const [payments, setPayments] = useState([])
@@ -68,6 +69,16 @@ export default function Account() {
   const [loadingPay, setLoadingPay] = useState(true)
 
   useEffect(() => {
+    // Check ban status in real time
+    client.get('/auth/me')
+      .then((r) => {
+        if (r.data.is_blocked) {
+          setIsBanned(true)
+          logout()
+        }
+      })
+      .catch(() => {})
+
     client.get('/subscriptions')
       .then((r) => setSubscriptions(r.data))
       .catch(() => {})
@@ -87,6 +98,26 @@ export default function Account() {
   const referralLink = referral?.referral_code
     ? `${window.location.origin}/register?ref=${referral.referral_code}`
     : null
+
+  if (isBanned) {
+    return (
+      <motion.div {...PAGE_TRANSITION}>
+        <Navbar />
+        <div className="min-h-screen flex items-center justify-center px-4">
+          <div className="text-center max-w-md">
+            <div className="w-20 h-20 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-6">
+              <Ban className="w-10 h-10 text-red-400" />
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-3">Аккаунт заблокирован</h2>
+            <p className="text-[#94A3B8] leading-relaxed">
+              Ваш аккаунт был заблокирован администратором. Если вы считаете это ошибкой, свяжитесь с поддержкой.
+            </p>
+          </div>
+        </div>
+        <Footer />
+      </motion.div>
+    )
+  }
 
   return (
     <motion.div {...PAGE_TRANSITION}>

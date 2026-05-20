@@ -5,12 +5,13 @@ from __future__ import annotations
 import random
 import string
 from datetime import datetime, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from core.models import User
-from dependencies import create_access_token, hash_password, verify_password
+from core.models import User, Referral
+from dependencies import create_access_token, hash_password, verify_password, get_current_user
 
 router = APIRouter()
 
@@ -49,11 +50,14 @@ class AdminLoginBody(BaseModel):
 async def register(body: RegisterBody, request: Request):
     storage = _storage(request)
 
-    # Check if phone already used
     all_users = await storage.get_all_users()
+    body_name = body.full_name.strip()
+
     for u in all_users:
         if u.phone == body.phone:
             raise HTTPException(status_code=400, detail="Телефон уже зарегистрирован")
+        if u.full_name.strip().lower() == body_name.lower():
+            raise HTTPException(status_code=400, detail="Имя уже занято, выберите другое")
 
     # Handle referral
     referrer = None
@@ -62,7 +66,6 @@ async def register(body: RegisterBody, request: Request):
 
     user_id = _web_user_id(body.phone)
     referral_code = _gen_referral_code()
-    # Ensure uniqueness
     existing_codes = {u.referral_code for u in all_users}
     while referral_code in existing_codes:
         referral_code = _gen_referral_code()
@@ -71,7 +74,7 @@ async def register(body: RegisterBody, request: Request):
         telegram_id=user_id,
         phone=body.phone,
         username=None,
-        full_name=body.full_name,
+        full_name=body_name,
         referral_code=referral_code,
         referred_by=referrer.referral_code if referrer else None,
         bonus_gb=0.0,
@@ -80,10 +83,20 @@ async def register(body: RegisterBody, request: Request):
     )
     await storage.save_user(user)
 
-    # Store password hash separately
     pw_data = await storage._read("user_passwords.json", {})
     pw_data[body.phone] = hash_password(body.password)
     await storage._write("user_passwords.json", pw_data)
+
+    # Create Referral record so invited_count is tracked correctly
+    if referrer:
+        referral_record = Referral(
+            id=storage.new_id(),
+            referrer_id=referrer.telegram_id,
+            referred_id=user_id,
+            bonus_applied=False,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        await storage.save_referral(referral_record)
 
     token = create_access_token({"user_id": user_id, "phone": body.phone, "role": "user"})
     return {
@@ -95,6 +108,7 @@ async def register(body: RegisterBody, request: Request):
             "full_name": user.full_name,
             "referral_code": user.referral_code,
             "bonus_gb": user.bonus_gb,
+            "is_blocked": user.is_blocked,
         },
     }
 
@@ -126,6 +140,7 @@ async def login(body: LoginBody, request: Request):
             "full_name": user.full_name,
             "referral_code": user.referral_code,
             "bonus_gb": user.bonus_gb,
+            "is_blocked": user.is_blocked,
         },
     }
 
@@ -149,3 +164,22 @@ async def admin_login(body: AdminLoginBody, request: Request):
 
     token = create_access_token({"username": body.username, "role": "admin"})
     return {"access_token": token, "token_type": "bearer"}
+
+
+@router.get("/me")
+async def get_me(
+    request: Request,
+    user_id: Annotated[int, Depends(get_current_user)],
+):
+    storage = _storage(request)
+    user = await storage.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    return {
+        "id": user.telegram_id,
+        "phone": user.phone,
+        "full_name": user.full_name,
+        "referral_code": user.referral_code,
+        "bonus_gb": user.bonus_gb,
+        "is_blocked": user.is_blocked,
+    }

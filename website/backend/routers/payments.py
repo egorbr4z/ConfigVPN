@@ -42,6 +42,10 @@ async def initiate_payment(
 ):
     storage: JSONStorage = request.app.state.storage
 
+    user = await storage.get_user(user_id)
+    if not user or user.is_blocked:
+        raise HTTPException(status_code=403, detail="Аккаунт заблокирован")
+
     # Determine amount and product details
     amount = 0.0
     product_ref = ""
