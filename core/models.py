@@ -30,6 +30,8 @@ class SubscriptionPlan:
     is_active: bool
     max_connections: int = 1          # simultaneous devices
     monthly_traffic_gb: float = 0.0  # 0 = unlimited
+    sort_order: int = 0
+    badge: str | None = None          # "popular", "profitable", or None
 
 
 @dataclass

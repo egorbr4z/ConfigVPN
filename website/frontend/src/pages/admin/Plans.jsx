@@ -1,13 +1,24 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Plus, Pencil, Trash2, X, Infinity } from 'lucide-react'
+import { Plus, Pencil, Trash2, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { adminClient } from '../../api/client.js'
 import toast from 'react-hot-toast'
 
-const empty = { name: '', type: 'regular', price: '', duration_days: 30, traffic_gb: 100, monthly_traffic_gb: 0, max_connections: 1, description: '' }
+const BADGES = [
+  { value: null, label: 'Без метки' },
+  { value: 'popular', label: '🔥 Популярный' },
+  { value: 'profitable', label: '💎 Выгодный' },
+]
+
+const BADGE_STYLES = {
+  popular: 'bg-gradient-to-r from-primary to-secondary text-white',
+  profitable: 'bg-gradient-to-r from-green-500 to-emerald-400 text-white',
+}
+
+const empty = { name: '', type: 'regular', price: '', duration_days: 30, traffic_gb: 100, monthly_traffic_gb: 0, max_connections: 1, description: '', badge: null }
 
 function PlanModal({ plan, onClose, onSave }) {
-  const [form, setForm] = useState(plan || empty)
+  const [form, setForm] = useState(plan ? { ...plan, badge: plan.badge ?? null } : empty)
   const [loading, setLoading] = useState(false)
   const isNew = !plan
 
@@ -20,7 +31,7 @@ function PlanModal({ plan, onClose, onSave }) {
         await adminClient.post('/admin/plans', { ...form, price: +form.price, traffic_gb: +form.traffic_gb, monthly_traffic_gb: +form.monthly_traffic_gb, max_connections: +form.max_connections, duration_days: +form.duration_days })
         toast.success('Тариф добавлен')
       } else {
-        await adminClient.patch(`/admin/plans/${plan.id}`, { name: form.name, price: +form.price, description: form.description, monthly_traffic_gb: +form.monthly_traffic_gb, max_connections: +form.max_connections })
+        await adminClient.patch(`/admin/plans/${plan.id}`, { name: form.name, price: +form.price, description: form.description, monthly_traffic_gb: +form.monthly_traffic_gb, max_connections: +form.max_connections, badge: form.badge })
         toast.success('Тариф обновлён')
       }
       onSave()
@@ -80,6 +91,18 @@ function PlanModal({ plan, onClose, onSave }) {
             <label className="text-xs text-[#94A3B8] block mb-1">Описание</label>
             <textarea className="input-field resize-none h-20" value={form.description} onChange={e => set('description', e.target.value)} />
           </div>
+
+          <div>
+            <label className="text-xs text-[#94A3B8] block mb-2">Метка</label>
+            <div className="flex gap-2">
+              {BADGES.map(b => (
+                <button key={String(b.value)} onClick={() => set('badge', b.value)}
+                  className={`flex-1 py-2 rounded-xl text-xs font-medium transition-all ${form.badge === b.value ? 'btn-primary' : 'btn-outline'}`}>
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="flex gap-3 mt-5">
@@ -93,10 +116,13 @@ function PlanModal({ plan, onClose, onSave }) {
 
 export default function AdminPlans() {
   const [plans, setPlans] = useState([])
-  const [modal, setModal] = useState(null) // null | 'new' | plan object
+  const [modal, setModal] = useState(null)
 
   const load = async () => {
-    try { const r = await adminClient.get('/admin/plans'); setPlans(r.data) } catch {}
+    try {
+      const r = await adminClient.get('/admin/plans')
+      setPlans([...r.data].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)))
+    } catch {}
   }
 
   useEffect(() => { load() }, [])
@@ -114,6 +140,17 @@ export default function AdminPlans() {
     try { await adminClient.delete(`/admin/plans/${id}`); toast.success('Удалён'); load() } catch { toast.error('Ошибка') }
   }
 
+  const move = async (index, direction) => {
+    const swapWith = index + direction
+    if (swapWith < 0 || swapWith >= plans.length) return
+    const newPlans = [...plans]
+    ;[newPlans[index], newPlans[swapWith]] = [newPlans[swapWith], newPlans[index]]
+    setPlans(newPlans)
+    try {
+      await adminClient.put('/admin/plans/reorder', newPlans.map((p, i) => ({ id: p.id, sort_order: i })))
+    } catch { toast.error('Ошибка сортировки'); load() }
+  }
+
   return (
     <div>
       <AnimatePresence>
@@ -129,7 +166,12 @@ export default function AdminPlans() {
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {plans.map((plan, i) => (
-          <motion.div key={plan.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} className="vpn-card p-5">
+          <motion.div key={plan.id} layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} className="vpn-card p-5 relative overflow-hidden">
+            {plan.badge && (
+              <div className={`absolute top-0 right-0 text-xs font-semibold px-3 py-1 rounded-bl-xl ${BADGE_STYLES[plan.badge]}`}>
+                {BADGES.find(b => b.value === plan.badge)?.label}
+              </div>
+            )}
             <div className="flex items-start justify-between mb-3">
               <div>
                 <div className="flex items-center gap-2 mb-1">
@@ -147,7 +189,11 @@ export default function AdminPlans() {
               <div className="flex justify-between"><span>Срок</span><span className="text-[#E2E8F0]">{plan.duration_days} дн.</span></div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              <div className="flex flex-col gap-1">
+                <button onClick={() => move(i, -1)} disabled={i === 0} className="p-1 rounded bg-[#1E1E2E] text-[#94A3B8] hover:text-white disabled:opacity-25 transition-colors"><ChevronUp size={13} /></button>
+                <button onClick={() => move(i, 1)} disabled={i === plans.length - 1} className="p-1 rounded bg-[#1E1E2E] text-[#94A3B8] hover:text-white disabled:opacity-25 transition-colors"><ChevronDown size={13} /></button>
+              </div>
               <button onClick={() => toggle(plan)} className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all ${plan.is_active ? 'bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20' : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'}`}>
                 {plan.is_active ? 'Деактивировать' : 'Активировать'}
               </button>
@@ -157,6 +203,7 @@ export default function AdminPlans() {
           </motion.div>
         ))}
       </div>
+      {plans.length === 0 && <p className="text-center text-[#94A3B8] py-8">Нет тарифов</p>}
     </div>
   )
 }

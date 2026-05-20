@@ -24,6 +24,8 @@ class PlanBody(BaseModel):
     is_active: bool = True
     max_connections: int = 1
     monthly_traffic_gb: float = 0.0
+    sort_order: int = 0
+    badge: str | None = None
 
 
 class PlanPatch(BaseModel):
@@ -33,6 +35,13 @@ class PlanPatch(BaseModel):
     is_active: bool | None = None
     max_connections: int | None = None
     monthly_traffic_gb: float | None = None
+    sort_order: int | None = None
+    badge: str | None = None
+
+
+class ReorderItem(BaseModel):
+    id: str
+    sort_order: int
 
 
 @router.get("/plans")
@@ -64,9 +73,27 @@ async def create_plan(
         is_active=body.is_active,
         max_connections=body.max_connections,
         monthly_traffic_gb=body.monthly_traffic_gb,
+        sort_order=body.sort_order,
+        badge=body.badge,
     )
     await storage.save_subscription_plan(plan)
     return plan.__dict__
+
+
+# Must be defined before PUT /{plan_id} to avoid route conflict
+@router.put("/plans/reorder")
+async def reorder_plans(
+    body: list[ReorderItem],
+    request: Request,
+    _: Annotated[dict, Depends(get_current_admin)],
+):
+    storage: JSONStorage = request.app.state.storage
+    for item in body:
+        plan = await storage.get_subscription_plan(item.id)
+        if plan:
+            plan.sort_order = item.sort_order
+            await storage.save_subscription_plan(plan)
+    return {"status": "ok"}
 
 
 @router.patch("/plans/{plan_id}")
@@ -86,6 +113,9 @@ async def patch_plan(
     if body.is_active is not None: plan.is_active = body.is_active
     if body.max_connections is not None: plan.max_connections = body.max_connections
     if body.monthly_traffic_gb is not None: plan.monthly_traffic_gb = body.monthly_traffic_gb
+    if body.sort_order is not None: plan.sort_order = body.sort_order
+    # badge can be explicitly set to None to clear it
+    if "badge" in body.model_fields_set: plan.badge = body.badge
     await storage.save_subscription_plan(plan)
     return plan.__dict__
 
@@ -111,6 +141,8 @@ async def update_plan(
     plan.is_active = body.is_active
     plan.max_connections = body.max_connections
     plan.monthly_traffic_gb = body.monthly_traffic_gb
+    plan.sort_order = body.sort_order
+    plan.badge = body.badge
 
     await storage.save_subscription_plan(plan)
     return plan.__dict__

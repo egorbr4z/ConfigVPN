@@ -197,7 +197,7 @@ export default function Plans() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
             {filteredPlans.map((plan, i) => (
               <div key={plan.id} onClick={() => handleBuyClick(plan)} className="cursor-pointer">
-                <PlanCard plan={plan} index={i} featured={i === 0} />
+                <PlanCard plan={plan} index={i} featured={!!plan.badge} />
               </div>
             ))}
             {filteredPlans.length === 0 && (
