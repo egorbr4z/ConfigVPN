@@ -9,6 +9,11 @@ function formatTraffic(gb) {
   return `${gb} ГБ`
 }
 
+const BADGE_CONFIG = {
+  popular:    { label: '🔥 Популярный', cls: 'bg-gradient-to-r from-primary to-secondary text-white' },
+  profitable: { label: '💎 Выгодный',   cls: 'bg-gradient-to-r from-green-500 to-emerald-400 text-white' },
+}
+
 export default function PlanCard({ plan, index = 0, featured = false }) {
   const navigate = useNavigate()
   const { isAuthenticated } = useAuthStore()
@@ -22,6 +27,8 @@ export default function PlanCard({ plan, index = 0, featured = false }) {
   }
 
   const isWhitelist = plan.type === 'whitelist'
+  const badge = BADGE_CONFIG[plan.badge]
+  const highlight = featured || !!badge
 
   return (
     <motion.div
@@ -30,14 +37,13 @@ export default function PlanCard({ plan, index = 0, featured = false }) {
       transition={{ delay: index * 0.1, duration: 0.5 }}
       whileHover={{ scale: 1.02, y: -4 }}
       className={`vpn-card p-6 relative overflow-hidden ${
-        featured ? 'border-primary/60 shadow-lg shadow-primary/10' : ''
+        highlight ? 'border-primary/60 shadow-lg shadow-primary/10' : ''
       }`}
     >
-      {/* Featured badge */}
-      {featured && (
+      {badge && (
         <div className="absolute top-0 right-0">
-          <div className="bg-gradient-to-r from-primary to-secondary text-white text-xs font-semibold px-3 py-1 rounded-bl-xl">
-            Популярный
+          <div className={`text-xs font-semibold px-3 py-1 rounded-bl-xl ${badge.cls}`}>
+            {badge.label}
           </div>
         </div>
       )}
@@ -95,7 +101,7 @@ export default function PlanCard({ plan, index = 0, featured = false }) {
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
         className={`w-full py-3 rounded-xl font-semibold text-sm transition-all ${
-          featured
+          highlight
             ? 'btn-primary text-white'
             : 'btn-outline text-[#E2E8F0] hover:border-primary'
         }`}

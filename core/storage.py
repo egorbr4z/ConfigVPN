@@ -234,6 +234,7 @@ class JSONStorage(BaseStorage):
         plans = [self._plan_from_raw(v) for v in data.values()]
         if active_only:
             plans = [p for p in plans if p.is_active]
+        plans.sort(key=lambda p: p.sort_order)
         return plans
 
     async def get_subscription_plan(self, plan_id: str) -> SubscriptionPlan | None:

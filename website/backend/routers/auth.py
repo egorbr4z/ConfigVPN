@@ -25,8 +25,7 @@ def _gen_referral_code(length: int = 8) -> str:
 
 def _web_user_id(phone: str) -> int:
     """Generate a stable numeric ID from a phone number for web-only users."""
-    # Use hash-based negative ID to avoid collision with Telegram IDs (positive)
-    return -(abs(hash(phone)) % (10**12))
+    return (abs(hash(phone)) % 2_147_483_647) + 1
 
 
 class RegisterBody(BaseModel):
