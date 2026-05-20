@@ -44,9 +44,10 @@ function Spinner() {
 
 function StatusBadge({ status }) {
   const map = {
-    pending: { cls: 'badge-pending', label: 'Ожидает' },
+    draft:     { cls: 'badge-inactive', label: 'Не завершён' },
+    pending:   { cls: 'badge-pending',  label: 'Ожидает' },
     confirmed: { cls: 'badge-confirmed', label: 'Подтверждён' },
-    rejected: { cls: 'badge-rejected', label: 'Отклонён' },
+    rejected:  { cls: 'badge-rejected', label: 'Отклонён' },
   }
   const { cls, label } = map[status] || { cls: 'badge-inactive', label: status }
   return <span className={`badge ${cls}`}>{label}</span>
@@ -265,7 +266,18 @@ export default function Account() {
                           {pay.type === 'subscription' ? 'Подписка' : 'Свой VPN'}
                         </td>
                         <td className="py-3 pr-4 text-[#E2E8F0] font-medium">{pay.amount}₽</td>
-                        <td className="py-3"><StatusBadge status={pay.status} /></td>
+                        <td className="py-3">
+                          {pay.status === 'draft' ? (
+                            <Link
+                              to={`/payment/${pay.id}`}
+                              className="badge badge-inactive hover:border-primary/50 hover:text-purple-300 transition-colors"
+                            >
+                              Не завершён →
+                            </Link>
+                          ) : (
+                            <StatusBadge status={pay.status} />
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

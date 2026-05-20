@@ -121,7 +121,7 @@ async def initiate_payment(
         product_details=product_details,
         requisite_id=requisite.id,
         last4=None,
-        status="pending",
+        status="draft",
         created_at=datetime.now(timezone.utc).isoformat(),
         reviewed_at=None,
         reviewed_by=None,
@@ -155,6 +155,7 @@ async def confirm_last4(
         raise HTTPException(status_code=400, detail="Платёж уже обработан")
 
     payment.last4 = body.last4
+    payment.status = "pending"
     await storage.save_payment(payment)
     return {"status": "ok", "message": "Данные приняты, ожидайте подтверждения"}
 

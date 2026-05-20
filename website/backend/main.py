@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.storage import JSONStorage
@@ -51,12 +52,28 @@ app.include_router(admin_payments.router, prefix="/api/admin", tags=["admin"])
 app.include_router(admin_providers.router, prefix="/api/admin", tags=["admin"])
 app.include_router(admin_settings.router, prefix="/api/admin", tags=["admin"])
 
-# Serve React build in production
-frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
-if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
-
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+# SPA catch-all: serve static assets if they exist, otherwise return index.html
+# This must come AFTER all API routes so API endpoints are matched first.
+_frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+_assets_dir = _frontend_dist / "assets"
+
+if _assets_dir.exists():
+    app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    if _frontend_dist.exists():
+        file_path = _frontend_dist / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(str(file_path))
+        index = _frontend_dist / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+    return {"detail": "Frontend not built"}
