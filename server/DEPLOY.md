@@ -229,7 +229,7 @@ xray run -test -config /usr/local/etc/xray/config.json   # проверка ко
 | Симптом | Причина | Решение |
 |---------|---------|---------|
 | certbot падает | DNS не указывает на сервер / порт 80 закрыт | проверьте `dig`, откройте :80 |
-| Xray не стартует: `permission denied` на cert | Xray (nobody) не читает Let's Encrypt | скрипт ставит ACL/`User=root`; см. `journalctl -xeu xray` |
+| Xray не стартует: `permission denied` на cert | Xray запущен не от root | скрипт ставит `User=root` в systemd drop-in; проверьте `cat /etc/systemd/system/xray.service.d/20-user.conf` |
 | `"PRI * HTTP/2.0" 400` в access.log | нет `http2 on;` на :443 | проверьте `nginx_fallback.conf`, перегенерируйте |
 | `read/write on closed pipe` | клиент в режиме `mode=auto`/stream | URI должен быть `mode=packet-up` (генератор уже так делает) |
 | anti-probe отдаёт 404 вместо сайта | сломан fallback / нет IPv4-резолвера | см. `server/configs/XHTTP_SETUP.md` п.5 |

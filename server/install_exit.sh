@@ -10,9 +10,10 @@
 #   1. Installs nginx + certbot + python3 + Xray (official installer)
 #   2. Obtains a Let's Encrypt TLS cert for --domain
 #   3. Runs generate_config.py to produce all configs
-#   4. Writes configs to system paths (--apply) and sets permissions
-#   5. Enables and starts nginx + xray
-#   6. Prints VLESS client URIs
+#   4. Writes configs to system paths (--apply)
+#   5. Configures Xray to run as root (avoids cert permission errors)
+#   6. Enables and starts nginx + xray
+#   7. Prints VLESS client URIs
 
 set -euo pipefail
 
@@ -116,7 +117,6 @@ fi
 
 # Xray log dir
 mkdir -p /var/log/xray
-chown -R nobody:nogroup /var/log/xray
 
 # ── 5. generate configs ──────────────────────────────────────────────────────
 log "Generating PHANTOM configs"
@@ -145,28 +145,14 @@ fi
 
 nginx -t || err "nginx config test failed — check /etc/nginx/sites-available/phantom-fallback"
 
-# ── 7. Xray cert access ──────────────────────────────────────────────────────
-# Xray runs as nobody; it needs to read Let's Encrypt files.
-log "Granting Xray cert access"
-if command -v setfacl &>/dev/null; then
-    setfacl -R -m u:nobody:rX /etc/letsencrypt/live  2>/dev/null || true
-    setfacl -R -m u:nobody:rX /etc/letsencrypt/archive 2>/dev/null || true
-else
-    # fallback: chmod g+rx and add nobody to ssl-cert group if it exists
-    chmod -R g+rX /etc/letsencrypt/live   2>/dev/null || true
-    chmod -R g+rX /etc/letsencrypt/archive 2>/dev/null || true
-fi
-
-# Systemd drop-in to run Xray as root if ACL not available (last resort)
+# ── 7. run Xray as root ──────────────────────────────────────────────────────
+log "Configuring Xray to run as root"
 XRAY_DROPIN="/etc/systemd/system/xray.service.d"
-if ! setfacl -R -m u:nobody:rX /etc/letsencrypt/live 2>/dev/null; then
-    log "setfacl not available — creating systemd drop-in to run Xray as root"
-    mkdir -p "${XRAY_DROPIN}"
-    cat > "${XRAY_DROPIN}/20-user.conf" <<'EOF'
+mkdir -p "${XRAY_DROPIN}"
+cat > "${XRAY_DROPIN}/20-user.conf" <<'EOF'
 [Service]
 User=root
 EOF
-fi
 
 # ── 8. enable and start services ─────────────────────────────────────────────
 log "Enabling and starting nginx + xray"
