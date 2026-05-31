@@ -112,3 +112,34 @@ class Settings:
     referral_bonus_gb: float
     faq_text: str
     notifications: dict
+
+
+# ---------------------------------------------------------------------------
+# PHANTOM protocol models
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PhantomProvider:
+    """Exit-server that runs PHANTOM (Xray + doorman)."""
+    id: str
+    server_ip: str      # public IP of the exit server
+    domain: str         # domain with a valid TLS cert (e.g. Let's Encrypt)
+    secret: str         # 32-hex-byte master secret; used to derive auth path token
+    port: int = 443
+
+    def __post_init__(self) -> None:
+        if len(self.secret) < 16:
+            raise ValueError("PhantomProvider.secret must be at least 16 characters")
+
+
+@dataclass
+class CdnRelay:
+    """CDN relay configuration for whitelist-mode bypass (Плечо B).
+
+    Two modes:
+      - CDN-as-proxy  (fronting_sni is None):   SNI == cdn_domain, address = cdn_domain
+      - True fronting (fronting_sni is set):     SNI = whitelisted domain, address = cdn_edge_ip
+    """
+    cdn_domain: str             # our domain registered on the CDN (CNAME → CDN edge)
+    cdn_edge_ip: str            # CDN's Russian edge IP (used for true fronting)
+    fronting_sni: str | None = None   # SNI override for true fronting; None = no fronting

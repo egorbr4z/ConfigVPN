@@ -1,0 +1,89 @@
+{
+  "_comment": [
+    "PHANTOM — Direct mode Xray server config.",
+    "Xray listens on port 443 with TLS (Let's Encrypt cert).",
+    "Replace: PHANTOM_DOMAIN, PHANTOM_TOKEN, USER_UUID_1 ... USER_UUID_N",
+    "",
+    "Generate Reality keypair (if using Reality instead of TLS):  xray x25519",
+    "Generate PHANTOM_TOKEN: python3 -c \"",
+    "  import hmac, hashlib",
+    "  s='YOUR_SECRET'; k=hashlib.sha256(s.encode()).digest()",
+    "  print(hmac.new(k, b'phantom-v1', hashlib.sha256).digest()[:16].hex())",
+    "\""
+  ],
+  "log": {
+    "loglevel": "warning",
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log"
+  },
+  "inbounds": [
+    {
+      "tag": "phantom-inbound",
+      "listen": "0.0.0.0",
+      "port": 443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "USER_UUID_1",
+            "flow": "",
+            "level": 0
+          }
+        ],
+        "decryption": "none",
+        "fallbacks": [
+          {
+            "_comment": "Any non-WS or wrong-path request → nginx (anti-probe)",
+            "dest": 8080,
+            "xver": 0
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "PHANTOM_DOMAIN",
+          "minVersion": "1.3",
+          "certificates": [
+            {
+              "certificateFile": "/etc/letsencrypt/live/PHANTOM_DOMAIN/fullchain.pem",
+              "keyFile":         "/etc/letsencrypt/live/PHANTOM_DOMAIN/privkey.pem"
+            }
+          ],
+          "alpn": ["h2", "http/1.1"]
+        },
+        "wsSettings": {
+          "_comment": "Only requests to this exact path are accepted; all others → fallback",
+          "path": "/phantom/PHANTOM_TOKEN"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct",
+      "settings": {}
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "_comment": "Block access to RFC-1918/loopback from VPN clients",
+        "type": "field",
+        "ip": ["geoip:private"],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}
