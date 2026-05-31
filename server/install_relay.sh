@@ -28,15 +28,15 @@ SECRET=""
 PORT=443
 
 usage() {
-    echo "Usage: sudo bash $0 --exit-ip IP --exit-domain DOMAIN [options]"
+    echo "Usage: sudo bash $0 --exit-ip IP [options]"
     echo ""
     echo "Required:"
     echo "  --exit-ip     IP      Foreign exit server public IPv4"
-    echo "  --exit-domain DOMAIN  Domain of the exit server (e.g. vpn.example.com)"
     echo ""
     echo "Optional:"
-    echo "  --secret SECRET       HMAC master secret (used only to print the"
-    echo "                        PHANTOM-Whitelist URI; omit if you already have it)"
+    echo "  --exit-domain DOMAIN  Label/domain of the exit (cosmetic for REALITY;"
+    echo "                        only meaningful for the legacy xhttp URI)"
+    echo "  --secret SECRET       [xhttp only] HMAC master secret to print a URI"
     echo "  --port   PORT         Port to listen on and forward to (default: 443)"
     exit 1
 }
@@ -52,8 +52,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ -z "$EXIT_IP"     ]] && { echo "ERROR: --exit-ip is required";     usage; }
-[[ -z "$EXIT_DOMAIN" ]] && { echo "ERROR: --exit-domain is required"; usage; }
+[[ -z "$EXIT_IP" ]] && { echo "ERROR: --exit-ip is required"; usage; }
+EXIT_DOMAIN="${EXIT_DOMAIN:-the exit}"
 
 [[ $EUID -ne 0 ]] && { echo "ERROR: run as root (sudo bash $0 ...)"; exit 1; }
 

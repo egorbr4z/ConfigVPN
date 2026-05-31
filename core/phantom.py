@@ -9,40 +9,24 @@ PHANTOM combines the strongest anti-detection properties of four protocols:
   • VLESS    — lightweight framing, standard client support
   • (SS)     — high-entropy payload hidden inside normal-looking HTTPS
 
-Transport
----------
-PHANTOM uses Xray's XHTTP transport (network="xhttp") over TLS. XHTTP rides
-on ordinary HTTP/2 (or HTTP/1.1) requests, so it passes cleanly through CDNs
-and reverse proxies, and — unlike the older WebSocket transport — is not
-deprecated in current Xray.
+Transports
+----------
+1. REALITY (default, recommended) — VLESS + Vision + REALITY (network="tcp",
+   security="reality"). No domain, no certificate, no nginx: Xray binds :443
+   directly and borrows the live TLS handshake of a real, reachable site (the
+   "dest"). To DPI / active probers the connection is indistinguishable from a
+   genuine visit to that site; unauthenticated probes are transparently
+   forwarded to it, so anti-probe is native. Fastest path — nothing between
+   the client and Xray on the data path.
 
-Auth mechanism
---------------
-A secret HTTP path is used instead of a UUID payload or Cookie header:
-  path = /phantom/<TOKEN>
-  TOKEN = HMAC-SHA256(secret, b"phantom-v1")[:16].hex()
+2. XHTTP (legacy / CDN) — VLESS + XHTTP (network="xhttp") behind an nginx TLS
+   front (needs a domain + cert). A secret HTTP path authenticates:
+     path = /phantom/<TOKEN>,  TOKEN = HMAC-SHA256(secret, b"phantom-v1")[:16].hex()
+   The path lives inside TLS (invisible to DPI); other paths are served real
+   web content by nginx (anti-probe). Kept for clients without REALITY support
+   and for CDN fronting scenarios (CdnRelay).
 
-The path is transmitted inside TLS — invisible to DPI. Requests to any other
-path are served real web content by nginx (anti-probe). This is fully
-expressible in a standard VLESS URI (type=xhttp, path= parameter).
-
-Two deployment modes
---------------------
-  Direct  — nginx terminates TLS on :443 with a real Let's Encrypt cert and
-             reverse-proxies the secret path to a local Xray XHTTP listener;
-             every other path is served real web content (anti-probe).
-  CDN     — the CDN terminates TLS and origin-pulls plain HTTP from nginx on
-             a local port (default 8080); nginx does the same path routing.
-             Used for whitelist-mode bypass (CDN edge IPs are whitelisted).
-
-In both modes nginx does the path routing and Xray speaks plaintext XHTTP on
-127.0.0.1:10000 — no Python on the data path.
-
-True CDN fronting (optional)
------------------------------
-  If CdnRelay.fronting_sni is set, the client URI uses SNI = whitelisted domain
-  while Host header = our cdn_domain (same CDN). CDN routes by Host regardless
-  of SNI if it does not enforce strict SNI==Host validation.
+Both transports share the domestic TCP-passthrough relay for whitelist bypass.
 """
 
 from __future__ import annotations
@@ -55,7 +39,7 @@ import secrets
 import uuid
 from urllib.parse import quote, urlencode
 
-from core.models import CdnRelay, PhantomProvider
+from core.models import CdnRelay, PhantomProvider, RealityConfig
 
 
 # Local plaintext port where Xray listens for XHTTP. nginx (direct mode) or
@@ -65,6 +49,14 @@ PHANTOM_XRAY_PORT = 10000
 # Local plaintext HTTP port nginx exposes in "cdn" mode for the CDN to
 # origin-pull from (the CDN terminates TLS, so this port serves plain HTTP).
 PHANTOM_CDN_ORIGIN_PORT = 8080
+
+# REALITY transport: Xray binds this port directly with no nginx and no cert.
+PHANTOM_REALITY_PORT = 443
+
+# Default site whose TLS handshake REALITY borrows. Must be reachable from the
+# censored region, serve TLS 1.3 + HTTP/2 + X25519, and not itself be blocked.
+DEFAULT_REALITY_DEST = "www.microsoft.com:443"
+DEFAULT_REALITY_SNI  = "www.microsoft.com"
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +70,35 @@ def _derive_token(secret: str) -> str:
         b"phantom-v1",
         hashlib.sha256,
     ).digest()[:16].hex()
+
+
+def generate_reality_keypair() -> tuple[str, str]:
+    """Return an (private_key, public_key) x25519 pair, base64url-raw encoded.
+
+    Output is byte-for-byte compatible with ``xray x25519``. Requires the
+    ``cryptography`` package; if it is missing, generate the pair on the server
+    with ``xray x25519`` instead and pass the keys in explicitly.
+    """
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+
+    priv = X25519PrivateKey.generate()
+    priv_raw = priv.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub_raw = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+    return b64(priv_raw), b64(pub_raw)
+
+
+def generate_short_id() -> str:
+    """Return a random REALITY shortId (8 bytes → 16 hex chars)."""
+    return secrets.token_hex(8)
 
 
 def _build_uri(
@@ -198,6 +219,67 @@ def generate_relay_uri(
 
 
 # ---------------------------------------------------------------------------
+# REALITY URI generators (VLESS + Vision + REALITY, no domain / no cert)
+# ---------------------------------------------------------------------------
+
+def _build_reality_uri(
+    user_uuid: str,
+    address: str,
+    port: int,
+    reality: RealityConfig,
+    name: str,
+    fp: str = "chrome",
+) -> str:
+    params = {
+        "encryption": "none",
+        "security":   "reality",
+        "flow":       "xtls-rprx-vision",
+        "type":       "tcp",
+        "sni":        reality.server_name,
+        "fp":         fp,
+        "pbk":        reality.public_key,
+        "spx":        "/",
+    }
+    if reality.short_id:
+        params["sid"] = reality.short_id
+    return f"vless://{user_uuid}@{address}:{port}?{urlencode(params)}#{quote(name, safe='')}"
+
+
+def generate_reality_uri(
+    provider: PhantomProvider,
+    reality: RealityConfig,
+    user_uuid: str | None = None,
+    name: str = "PHANTOM-Reality",
+    fp: str = "chrome",
+) -> str:
+    """VLESS-Vision-REALITY URI for a direct connection to the exit's IP.
+
+    No domain is used: the client connects to the exit IP on :443 and REALITY
+    presents the borrowed handshake of ``reality.server_name``.
+    """
+    uid = user_uuid or str(uuid.uuid4())
+    return _build_reality_uri(uid, provider.server_ip, provider.port, reality, name, fp)
+
+
+def generate_reality_relay_uri(
+    provider: PhantomProvider,
+    reality: RealityConfig,
+    relay_ip: str,
+    user_uuid: str | None = None,
+    name: str = "PHANTOM-Reality-Whitelist",
+    fp: str = "chrome",
+) -> str:
+    """REALITY URI that enters via a domestic TCP-passthrough relay.
+
+    The relay blindly forwards raw TCP :443 to the exit, so the REALITY
+    handshake stays end-to-end with the exit. Only the connection address
+    changes to the relay's (domestic) IP — all REALITY params are identical.
+    """
+    uid = user_uuid or str(uuid.uuid4())
+    return _build_reality_uri(uid, relay_ip, provider.port, reality, name, fp)
+
+
+# ---------------------------------------------------------------------------
 # Subscription
 # ---------------------------------------------------------------------------
 
@@ -265,6 +347,60 @@ def generate_xray_server_config(
                 # Catch-all → direct. Must carry an effective matcher field
                 # ("network"); recent Xray rejects rules with no fields
                 # ("this rule has no effective fields").
+                {"type": "field", "network": "tcp,udp", "outboundTag": "direct"},
+            ],
+        },
+    }
+
+
+def generate_reality_xray_config(
+    user_uuids: list[str],
+    reality: RealityConfig,
+    *,
+    port: int = PHANTOM_REALITY_PORT,
+) -> dict:
+    """Return Xray JSON for a VLESS-Vision-REALITY exit.
+
+    Xray binds ``port`` directly (no nginx, no cert). Unauthenticated probes
+    are transparently forwarded to ``reality.dest`` and see that site's real
+    TLS handshake — REALITY provides the anti-probe behaviour natively.
+    """
+    clients = [{"id": uid, "flow": "xtls-rprx-vision", "level": 0} for uid in user_uuids]
+
+    inbound = {
+        "tag": "phantom-reality",
+        "listen": "0.0.0.0",
+        "port": port,
+        "protocol": "vless",
+        "settings": {
+            "clients": clients,
+            "decryption": "none",
+        },
+        "streamSettings": {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "show": False,
+                "dest": reality.dest,
+                "xver": 0,
+                "serverNames": [reality.server_name],
+                "privateKey": reality.private_key,
+                "shortIds": [reality.short_id] if reality.short_id else [""],
+            },
+        },
+    }
+
+    return {
+        "log": {"loglevel": "warning", "access": "/var/log/xray/access.log"},
+        "inbounds": [inbound],
+        "outbounds": [
+            {"protocol": "freedom", "tag": "direct", "settings": {}},
+            {"protocol": "blackhole", "tag": "block"},
+        ],
+        "routing": {
+            "domainStrategy": "IPIfNonMatch",
+            "rules": [
+                {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"},
                 {"type": "field", "network": "tcp,udp", "outboundTag": "direct"},
             ],
         },

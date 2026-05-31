@@ -2,47 +2,54 @@
 
 Пошаговая инструкция по поднятию PHANTOM на голых серверах.
 
-PHANTOM работает в двух режимах, которые сосуществуют на одном exit-сервере:
+PHANTOM использует транспорт **VLESS + Vision + REALITY**: exit-серверу **не
+нужен домен и сертификат** — Xray слушает :443 напрямую и заимствует TLS-рукопожатие
+реального сайта (по умолчанию `www.microsoft.com`). Для ТСПУ/DPI соединение
+неотличимо от обычного захода на этот сайт. Неаутентифицированные пробы
+прозрачно проксируются на тот же сайт (встроенный anti-probe).
+
+Два режима входа сосуществуют:
 
 | Режим | Против чего | Как клиент входит |
 |-------|-------------|-------------------|
-| **direct**    | блэклист / DPI (ТСПУ) | напрямую на домен exit-сервера |
+| **direct**    | блэклист / DPI (ТСПУ) | напрямую на IP exit-сервера |
 | **whitelist** | белые списки          | через домашний (РФ) relay по raw TCP |
 
 Архитектура:
 
 ```
-                    ┌──────────────────── direct ───────────────────┐
-клиент ──TLS──────────────────────────────────────► exit :443 (nginx)
-                                                       ├─ /phantom/<token> → Xray :10000 (xhttp)
-клиент ──TLS──► RF relay :443 ──raw TCP──► exit :443   └─ всё прочее → реальный сайт (anti-probe)
-                    └─────────────── whitelist ──────────────────────┘
+                    ┌──────────────── direct ────────────────┐
+клиент ──REALITY/TLS─────────────────────────► exit :443 (Xray, REALITY)
+                                                  ├─ аутентиф. клиент → туннель
+клиент ──REALITY──► RF relay :443 ──raw TCP──►    └─ проба/DPI → www.microsoft.com
+                    └────────────── whitelist ──────────────┘
 ```
 
-TLS всегда end-to-end между клиентом и exit-сервером. Relay слепой — он не
-расшифровывает трафик и не хранит сертификат.
+REALITY-рукопожатие всегда end-to-end между клиентом и exit. Relay слепой — он
+пересылает сырой TCP, ничего не расшифровывает и не хранит ключей.
+
+> **XHTTP-режим** (старый, через nginx+домен+cert) остаётся доступен через
+> `--transport xhttp`. Он нужен только если ваши клиенты не умеют REALITY
+> (почти все умеют) или для CDN-сценариев. См. раздел 5.
 
 ---
 
 ## 0. Что нужно заранее
 
 **Серверы:**
-- **Exit** (зарубежный): VPS на Debian 12/13 или Ubuntu 22.04+, root-доступ,
-  публичный IPv4, минимум 1 vCPU / 1 GB RAM.
+- **Exit** (зарубежный): VPS на Debian 12/13 или Ubuntu 22.04+, root, публичный
+  IPv4, минимум 1 vCPU / 1 GB RAM.
 - **Relay** (РФ, опционально — только для обхода белых списков): тоже Debian/Ubuntu,
   root, публичный IPv4. Российский хостинг (его IP с большей вероятностью проходит).
 
-**Домен:**
-- Домен или поддомен, указывающий **A-записью на IP exit-сервера**.
-  Например `vpn.example.com → 1.2.3.4`. DNS должен прорезолвиться до запуска
-  (certbot проверяет владение доменом).
+**Домен:** для REALITY **не нужен**. (Нужен только для `--transport xhttp`.)
 
-**Порты на exit:** 22 (SSH), 80 (Let's Encrypt), 443 (PHANTOM).
+**Порты на exit:** 22 (SSH), 443 (PHANTOM).
 **Порты на relay:** 22, 443.
 
 ---
 
-## 1. Exit-сервер (зарубежный)
+## 1. Exit-сервер (зарубежный) — REALITY
 
 ### 1.1. Подготовка
 
@@ -53,63 +60,67 @@ git clone https://github.com/egorbr4z/configvpn.git /opt/phantom
 cd /opt/phantom
 ```
 
-Убедитесь, что домен резолвится на этот сервер:
-
-```bash
-dig +short vpn.example.com     # должен вернуть IP этого сервера
-```
-
-Если пусто или другой IP — сначала поправьте DNS и дождитесь распространения.
-
 ### 1.2. Установка
 
 ```bash
 IP=$(curl -s4 ifconfig.me)
-sudo bash server/install_exit.sh --domain vpn.example.com --ip "$IP"
+sudo bash server/install_exit.sh --ip "$IP"
 ```
 
-Скрипт сам:
-1. поставит nginx, certbot, Xray;
-2. получит Let's Encrypt сертификат;
-3. сгенерирует конфиги и применит их (`--apply`);
-4. выдаст права Xray на чтение сертификата и запись логов;
-5. включит и запустит nginx + xray;
+Скрипт:
+1. поставит Xray (официальный установщик);
+2. сгенерирует x25519-ключи REALITY (`xray x25519`);
+3. сгенерирует и применит конфиг (`generate_config.py --transport reality --apply`);
+4. настроит Xray на запуск от root и слушание :443;
+5. откроет фаервол, запустит и включит xray;
 6. напечатает VLESS-ссылки.
 
-**Сохраните вывод** — там VLESS URI и master secret. Secret также лежит в
-`/etc/phantom/phantom.secret` — это ключ ко всем подключениям, не теряйте его.
+**Сохраните вывод** — там VLESS URI и ключи. Они также в `/etc/phantom/phantom.secret`.
 
 Полезные опции:
 
 ```bash
-# свой secret + 3 юзера + сразу прописать relay
-sudo bash server/install_exit.sh \
-    --domain vpn.example.com --ip "$IP" \
-    --secret "ваш-секрет" --users 3 --relay-ip 185.10.20.30
+# другой "донор" рукопожатия + 3 юзера + сразу relay
+sudo bash server/install_exit.sh --ip "$IP" \
+    --reality-sni www.cloudflare.com --reality-dest www.cloudflare.com:443 \
+    --users 3 --relay-ip 185.10.20.30
 ```
+
+> **Про выбор `--reality-sni`/`--reality-dest`:** сайт-донор должен быть
+> доступен из РФ, поддерживать TLS 1.3 + HTTP/2 + X25519 и сам не быть
+> заблокированным. Хорошие варианты: `www.microsoft.com`, `www.cloudflare.com`,
+> `dl.google.com`, `www.apple.com`. SNI и dest должны указывать на один сайт.
 
 ### 1.3. Проверка
 
 ```bash
-ss -tlnp | grep -E ':443|:10000'                 # nginx :443, xray :10000
-curl -sI --http2 https://vpn.example.com | head -2   # HTTP/2 200
-curl -sI https://vpn.example.com | head -1           # 200 — отдаётся реальный сайт (anti-probe)
+ss -tlnp | grep :443        # Xray слушает :443
+systemctl status xray       # active (running)
+journalctl -u xray -n 30    # без ошибок REALITY
 ```
 
-Anti-probe-проверка: запрос к корню `/` должен вернуть **реальный сайт**
-(не 404, не пустую страницу). Это маскирует сервер под обычный веб-сайт.
+Проверка «маскировки»: запрос по IP сервера должен увидеть **сертификат
+сайта-донора** (например microsoft.com), а не ошибку:
+
+```bash
+echo | openssl s_client -connect $IP:443 -servername www.microsoft.com 2>/dev/null \
+    | openssl x509 -noout -subject   # subject = реальный сайт-донор
+```
 
 ### 1.4. Подключение клиента (direct)
 
-Возьмите ссылку `PHANTOM-Direct` из вывода и импортируйте в клиент
-(v2rayTun / Happ / Hiddify / NekoBox). Подключитесь — это direct-режим против DPI.
+Возьмите ссылку `PHANTOM-Reality` из вывода и импортируйте в клиент
+(v2rayTun / Happ / Hiddify / NekoBox / sing-box). Это direct-режим против DPI.
 
-На этом для обхода блэклиста/DPI всё готово. Дальше — только если нужен обход
+Для обхода блэклиста/DPI на этом всё. Дальше — только если нужен обход
 **белых списков**.
 
 ---
 
 ## 2. Relay-сервер (РФ) — только для обхода белых списков
+
+Relay — слепой TCP-passthrough на :443 → exit:443. С REALITY рукопожатие идёт
+end-to-end сквозь relay, ничего расшифровывать не нужно.
 
 ### 2.1. Подготовка
 
@@ -123,40 +134,34 @@ cd /opt/phantom
 ### 2.2. Установка
 
 ```bash
-sudo bash server/install_relay.sh \
-    --exit-ip 1.2.3.4 \
-    --exit-domain vpn.example.com \
-    --secret "ваш-секрет"      # тот же secret, что на exit — чтобы скрипт напечатал URI
+sudo bash server/install_relay.sh --exit-ip 1.2.3.4
 ```
 
-`--secret` опционален: без него relay поднимется так же, просто не напечатает
-готовую `PHANTOM-Whitelist` ссылку (её всё равно можно взять с exit-сервера).
+Скрипт ставит nginx + stream-модуль, пишет passthrough-конфиг на exit:443,
+включает его в `nginx.conf`, открывает :443 и проверяет `nc -z exit:443`.
 
-Скрипт:
-1. поставит nginx + stream-модуль;
-2. напишет `stream {}` passthrough-конфиг на exit;
-3. включит его в `nginx.conf` (верхний уровень, рядом с `http{}`);
-4. откроет порт 443;
-5. запустит nginx и проверит `nc -z exit:443`.
+> `--exit-domain` для REALITY не обязателен (он был нужен только для печати
+> старого xhttp-URI).
 
 ### 2.3. Привязать relay к exit
 
-Relay только пересылает TCP. Чтобы клиент получил ссылку с адресом relay,
-**на exit-сервере** перегенерируйте конфиги с IP relay:
+**На exit-сервере** перегенерируйте конфиг с IP relay, **переиспользуя уже
+сгенерированные ключи** — добавится ссылка `PHANTOM-Reality-Whitelist`:
 
 ```bash
 # на EXIT-сервере
-RELAY_IP=185.10.20.30
-sudo python3 server/generate_config.py \
-    --domain vpn.example.com --ip 1.2.3.4 \
-    --secret "ваш-секрет" \
-    --relay-ip "$RELAY_IP" --apply
+source /etc/phantom/phantom.secret
+sudo python3 /opt/phantom/server/generate_config.py \
+    --ip 1.2.3.4 --transport reality \
+    --reality-sni "$REALITY_SNI" --reality-dest "$REALITY_DEST" \
+    --reality-private-key "$REALITY_PRIVATE_KEY" \
+    --reality-public-key  "$REALITY_PUBLIC_KEY" \
+    --reality-short-id    "$REALITY_SHORT_ID" \
+    --relay-ip 185.10.20.30 --apply
+sudo systemctl restart xray
 ```
 
-В выводе появится ссылка `PHANTOM-Whitelist` (адрес = IP relay, SNI = домен exit).
-
-> Это не меняет работу exit-сервера — direct продолжает работать. Просто
-> добавляется второй вход.
+Direct-режим продолжает работать — просто добавляется второй вход.
 
 ### 2.4. Проверка relay
 
@@ -164,21 +169,19 @@ sudo python3 server/generate_config.py \
 # на relay: видит ли он exit
 nc -vz 1.2.3.4 443
 
-# с клиента: relay прозрачно отдаёт сертификат exit
-curl -sI --resolve vpn.example.com:443:185.10.20.30 https://vpn.example.com | head -1   # 200
+# с клиента: relay прозрачно отдаёт рукопожатие донора
+echo | openssl s_client -connect <RELAY_IP>:443 -servername www.microsoft.com 2>/dev/null \
+    | openssl x509 -noout -subject
 ```
 
 ### 2.5. Подключение клиента (whitelist)
 
-Импортируйте ссылку `PHANTOM-Whitelist` в клиент. Можно держать **обе** ссылки
-(direct + whitelist) — клиент подключится по той, что проходит.
+Импортируйте `PHANTOM-Reality-Whitelist`. Можно держать обе ссылки (direct +
+whitelist) — клиент подключится по той, что проходит.
 
 ---
 
 ## 3. Тест белого списка (на Linux-клиенте)
-
-Перед реальным ограничением можно сымитировать белый список — пустить трафик
-только на IP relay:
 
 ```bash
 sudo ./server/whitelist_sim.sh on 185.10.20.30/32
@@ -191,49 +194,52 @@ sudo ./server/whitelist_sim.sh off
 
 ## 4. Обслуживание
 
-**Добавить пользователей** — перегенерировать с `--users N` и перезапустить Xray:
+**Добавить пользователей** — перегенерировать с `--users N` (переиспользуя ключи
+из `/etc/phantom/phantom.secret`, как в 2.3) и перезапустить Xray.
 
+**Скорость.** Включите BBR на exit (и relay) — на трансграничном канале это
+часто кратно поднимает throughput:
 ```bash
-sudo python3 server/generate_config.py --domain vpn.example.com --ip 1.2.3.4 \
-    --secret "ваш-секрет" --users 5 --apply
-sudo systemctl restart xray
-```
-
-**Обновление сертификата** — certbot ставит таймер автоматически. Проверка:
-
-```bash
-certbot renew --dry-run
-```
-
-После реального обновления перезапустите Xray (он держит cert в памяти):
-
-```bash
-sudo systemctl restart xray
+cat >> /etc/sysctl.conf <<'EOF'
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+EOF
+sysctl -p && sysctl net.ipv4.tcp_congestion_control   # → bbr
 ```
 
 **Логи и диагностика:**
-
 ```bash
 journalctl -xeu xray            # ошибки Xray
-journalctl -xeu nginx           # ошибки nginx
-tail /var/log/nginx/access.log  # запросы; "PRI * HTTP/2.0" 400 = нет http2 on (см. XHTTP_SETUP.md)
-tail /var/log/xray/access.log   # accepted ... [phantom-inbound -> direct] = туннель работает
-nginx -t                        # проверка конфига nginx
-xray run -test -config /usr/local/etc/xray/config.json   # проверка конфига Xray
+tail /var/log/xray/access.log   # accepted ... [phantom-reality -> direct]
+xray run -test -config /usr/local/etc/xray/config.json   # проверка конфига
 ```
 
 ---
 
-## 5. Частые проблемы
+## 5. XHTTP-режим (опционально, нужен домен)
+
+Если нужен старый транспорт за nginx (клиент без REALITY, CDN-сценарий):
+
+```bash
+# DNS: vpn.example.com → IP exit-сервера (A-запись) ДО запуска
+sudo bash server/install_exit.sh --transport xhttp \
+    --ip "$IP" --domain vpn.example.com
+```
+
+Этот путь ставит nginx + certbot, получает Let's Encrypt cert и поднимает
+XHTTP за nginx. Детали транспорта — `server/configs/XHTTP_SETUP.md`.
+
+---
+
+## 6. Частые проблемы
 
 | Симптом | Причина | Решение |
 |---------|---------|---------|
-| certbot падает | DNS не указывает на сервер / порт 80 закрыт | проверьте `dig`, откройте :80 |
-| Xray не стартует: `permission denied` на cert | Xray запущен не от root | скрипт ставит `User=root` в systemd drop-in; проверьте `cat /etc/systemd/system/xray.service.d/20-user.conf` |
-| `"PRI * HTTP/2.0" 400` в access.log | нет `http2 on;` на :443 | проверьте `nginx_fallback.conf`, перегенерируйте |
-| `read/write on closed pipe` | клиент в режиме `mode=auto`/stream | URI должен быть `mode=packet-up` (генератор уже так делает) |
-| anti-probe отдаёт 404 вместо сайта | сломан fallback / нет IPv4-резолвера | см. `server/configs/XHTTP_SETUP.md` п.5 |
-| relay не видит exit (`nc` fails) | фаервол exit или relay | откройте :443 на обоих, проверьте маршрут |
+| Xray не стартует | битый конфиг | `xray run -test -config /usr/local/etc/xray/config.json` |
+| `permission denied` на логах/cert | Xray запущен не от root | drop-in `User=root` (скрипт ставит); `cat /etc/systemd/system/xray.service.d/20-user.conf` |
+| Клиент не коннектится | не совпали ключи/sid/sni | сверьте `pbk`/`sid`/`sni` в URI с `/etc/phantom/phantom.secret` |
+| Подключается, но рвётся | донор REALITY недоступен/блокируется из РФ | смените `--reality-sni`/`--reality-dest` на другой живой сайт |
+| Низкая скорость при хорошем пинге | нет BBR | включите BBR (раздел 4) |
+| relay не видит exit (`nc` fails) | фаервол | откройте :443 на обоих |
 
-Подробности по транспорту XHTTP — в `server/configs/XHTTP_SETUP.md`.
-Подробности по relay — в `server/configs/whitelist_relay.md`.
+Подробности по relay — `server/configs/whitelist_relay.md`.
