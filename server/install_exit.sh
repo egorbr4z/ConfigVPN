@@ -115,8 +115,9 @@ else
     bash <(curl -Ls "${XRAY_INSTALL_SCRIPT}") install
 fi
 
-# Xray log dir
+# Xray log dir — owned by root since Xray runs as root
 mkdir -p /var/log/xray
+chown -R root:root /var/log/xray
 
 # ── 5. generate configs ──────────────────────────────────────────────────────
 log "Generating PHANTOM configs"
