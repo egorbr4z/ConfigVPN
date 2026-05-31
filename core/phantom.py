@@ -241,7 +241,10 @@ def generate_xray_server_config(
             "rules": [
                 # Block access to private/loopback ranges from VPN clients
                 {"type": "field", "ip": ["geoip:private"], "outboundTag": "block"},
-                {"type": "field", "outboundTag": "direct"},
+                # Catch-all → direct. Must carry an effective matcher field
+                # ("network"); recent Xray rejects rules with no fields
+                # ("this rule has no effective fields").
+                {"type": "field", "network": "tcp,udp", "outboundTag": "direct"},
             ],
         },
     }
