@@ -82,7 +82,8 @@ def main() -> None:
                   if args.mode in ("direct", "both") else None
     xray_cdn    = generate_xray_server_config(provider, uuids, mode="cdn") \
                   if args.mode in ("cdn", "both") else None
-    nginx_conf  = generate_nginx_fallback_conf(provider)
+    nginx_mode  = "cdn" if args.mode == "cdn" else "direct"
+    nginx_conf  = generate_nginx_fallback_conf(provider, mode=nginx_mode)
     doorman_env = generate_doorman_env(provider) if args.mode in ("cdn", "both") else None
 
     client_uris: list[str] = []

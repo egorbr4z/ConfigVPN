@@ -1,10 +1,11 @@
 {
   "_comment": [
     "PHANTOM — Direct mode Xray server config.",
-    "Xray listens on port 443 with TLS (Let's Encrypt cert).",
-    "Replace: PHANTOM_DOMAIN, PHANTOM_TOKEN, USER_UUID_1 ... USER_UUID_N",
+    "Xray listens on a LOCAL plaintext WebSocket port (127.0.0.1:10000).",
+    "nginx terminates TLS on :443 and reverse-proxies the secret path here,",
+    "serving real web content for every other request (anti-probe).",
+    "Replace: PHANTOM_TOKEN, USER_UUID_1 ... USER_UUID_N",
     "",
-    "Generate Reality keypair (if using Reality instead of TLS):  xray x25519",
     "Generate PHANTOM_TOKEN: python3 -c \"",
     "  import hmac, hashlib",
     "  s='YOUR_SECRET'; k=hashlib.sha256(s.encode()).digest()",
@@ -19,8 +20,8 @@
   "inbounds": [
     {
       "tag": "phantom-inbound",
-      "listen": "0.0.0.0",
-      "port": 443,
+      "listen": "127.0.0.1",
+      "port": 10000,
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -30,31 +31,13 @@
             "level": 0
           }
         ],
-        "decryption": "none",
-        "fallbacks": [
-          {
-            "_comment": "Any non-WS or wrong-path request → nginx (anti-probe)",
-            "dest": 8080,
-            "xver": 0
-          }
-        ]
+        "decryption": "none"
       },
       "streamSettings": {
         "network": "ws",
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "PHANTOM_DOMAIN",
-          "minVersion": "1.3",
-          "certificates": [
-            {
-              "certificateFile": "/etc/letsencrypt/live/PHANTOM_DOMAIN/fullchain.pem",
-              "keyFile":         "/etc/letsencrypt/live/PHANTOM_DOMAIN/privkey.pem"
-            }
-          ],
-          "alpn": ["h2", "http/1.1"]
-        },
+        "security": "none",
         "wsSettings": {
-          "_comment": "Only requests to this exact path are accepted; all others → fallback",
+          "_comment": "TLS is terminated by nginx; nginx only forwards this exact path here",
           "path": "/phantom/PHANTOM_TOKEN"
         }
       }
@@ -81,7 +64,9 @@
         "outboundTag": "block"
       },
       {
+        "_comment": "Catch-all → direct (needs a matcher field; recent Xray rejects empty rules)",
         "type": "field",
+        "network": "tcp,udp",
         "outboundTag": "direct"
       }
     ]

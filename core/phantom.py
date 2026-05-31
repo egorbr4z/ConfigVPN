@@ -48,6 +48,11 @@ from urllib.parse import quote, urlencode
 from core.models import CdnRelay, PhantomProvider
 
 
+# Local plaintext port where Xray listens in "direct" mode. nginx terminates
+# TLS on :443 and reverse-proxies the secret WebSocket path to this port.
+PHANTOM_XRAY_PORT = 10000
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -168,49 +173,33 @@ def generate_xray_server_config(
 ) -> dict:
     """Return Xray JSON configuration for the exit server.
 
-    mode="direct"  — Xray listens on port 443 with TLS, handles fallbacks.
+    mode="direct"  — Xray listens on a local plaintext WS port; nginx
+                      terminates TLS on :443 and reverse-proxies the secret
+                      path here, serving real content for everything else.
     mode="cdn"     — Xray listens on unix socket (doorman handles TLS / HTTP).
+
+    In both modes TLS is terminated in front of Xray (by nginx or the CDN),
+    never by Xray itself. This is what makes the Xray-level WebSocket fallback
+    unnecessary: nginx routes the secret path to Xray and every other request
+    to a real website, so the server is indistinguishable from a normal site.
     """
     token = _derive_token(provider.secret)
     ws_path = f"/phantom/{token}"
     clients = [{"id": uid, "flow": "", "level": 0} for uid in user_uuids]
 
-    if mode == "direct":
-        stream = {
-            "network": "ws",
-            "security": "tls",
-            "tlsSettings": {
-                "serverName": provider.domain,
-                "minVersion": "1.3",
-                "certificates": [
-                    {
-                        "certificateFile": f"/etc/letsencrypt/live/{provider.domain}/fullchain.pem",
-                        "keyFile": f"/etc/letsencrypt/live/{provider.domain}/privkey.pem",
-                    }
-                ],
-                "alpn": ["h2", "http/1.1"],
-                # fp is a CLIENT-side setting; server side just presents the cert
-            },
-            "wsSettings": {"path": ws_path},
-        }
-        inbound_listen = "0.0.0.0"
-        inbound_port = provider.port
+    # Both modes: plaintext WebSocket behind a TLS-terminating front.
+    stream = {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": {"path": ws_path},
+    }
 
-        # Fallback: any WS upgrade to wrong path → nginx (anti-probe)
-        # Any non-WS request → nginx
-        fallbacks = [
-            {"dest": 8080, "xver": 0},              # non-WS HTTP → nginx
-            {"path": "/", "dest": 8080, "xver": 0}, # wrong WS path → nginx
-        ]
+    if mode == "direct":
+        inbound_listen = "127.0.0.1"
+        inbound_port = PHANTOM_XRAY_PORT
     else:  # cdn mode
-        stream = {
-            "network": "ws",
-            "security": "none",
-            "wsSettings": {"path": ws_path},
-        }
         inbound_listen = "/tmp/phantom.sock,0666"
         inbound_port = 0      # unix socket ignores port
-        fallbacks = []
 
     inbound: dict = {
         "tag": "phantom-inbound",
@@ -218,16 +207,13 @@ def generate_xray_server_config(
         "settings": {
             "clients": clients,
             "decryption": "none",
-            "fallbacks": fallbacks,
         },
         "streamSettings": stream,
     }
 
+    inbound["listen"] = inbound_listen
     if mode == "direct":
-        inbound["listen"] = inbound_listen
         inbound["port"] = inbound_port
-    else:
-        inbound["listen"] = inbound_listen
 
     return {
         "log": {"loglevel": "warning", "access": "/var/log/xray/access.log"},
@@ -250,12 +236,91 @@ def generate_xray_server_config(
     }
 
 
-def generate_nginx_fallback_conf(provider: PhantomProvider) -> str:
-    """nginx.conf snippet — serves real content to active probers."""
+def generate_nginx_fallback_conf(
+    provider: PhantomProvider,
+    xray_port: int = PHANTOM_XRAY_PORT,
+    *,
+    mode: str = "direct",
+) -> str:
+    """nginx site config for PHANTOM.
+
+    mode="direct" — nginx terminates TLS on :443 and:
+      • reverse-proxies the secret WebSocket path to the local Xray listener
+        (the path lives inside TLS, invisible to DPI);
+      • serves real web content for every other request, so active probers
+        and DPI see an ordinary website and no trace of a VPN.
+      HTTP :80 keeps the ACME challenge path open (for certbot renewal) and
+      redirects everything else to HTTPS.
+
+    mode="cdn"    — TLS is terminated by the CDN/doorman, so nginx is just the
+      plaintext anti-probe content server the doorman forwards unauthenticated
+      requests to (127.0.0.1:8080).
+    """
+    if mode == "cdn":
+        return _nginx_cdn_fallback(provider)
+
+    token = _derive_token(provider.secret)
+    ws_path = f"/phantom/{token}"
     return f"""\
-# PHANTOM anti-probe fallback for {provider.domain}
-# Unauthenticated HTTP/WS requests are forwarded to a real website.
-# Active probers receive a genuine HTTP response and see no VPN.
+# PHANTOM TLS front for {provider.domain}
+# nginx terminates TLS and routes the secret WS path to Xray; every other
+# request is served as a real website (anti-probe). Generated — do not edit.
+
+server {{
+    listen 80;
+    listen [::]:80;
+    server_name {provider.domain};
+
+    location /.well-known/acme-challenge/ {{ root /var/www/html; }}
+    location / {{ return 301 https://$host$request_uri; }}
+}}
+
+server {{
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name {provider.domain};
+
+    ssl_certificate     /etc/letsencrypt/live/{provider.domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{provider.domain}/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    # --- Secret WebSocket path → Xray (invisible inside TLS) ---
+    location = {ws_path} {{
+        if ($http_upgrade != "websocket") {{ return 404; }}
+        proxy_pass            http://127.0.0.1:{xray_port};
+        proxy_http_version    1.1;
+        proxy_set_header      Upgrade    $http_upgrade;
+        proxy_set_header      Connection "upgrade";
+        proxy_set_header      Host       $host;
+        proxy_set_header      X-Real-IP  $remote_addr;
+        proxy_set_header      X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout    300s;
+        proxy_send_timeout    300s;
+    }}
+
+    # --- Anti-probe: everything else looks like a real website ---
+    location / {{
+        proxy_pass            https://www.iana.org;
+        proxy_ssl_server_name on;
+        proxy_set_header      Host            www.iana.org;
+        proxy_set_header      X-Real-IP       $remote_addr;
+        proxy_set_header      Accept-Encoding "";
+        proxy_hide_header     X-Powered-By;
+        proxy_hide_header     x-amz-id-2;
+        proxy_hide_header     x-amz-request-id;
+        add_header            X-Content-Type-Options "nosniff" always;
+    }}
+}}
+"""
+
+
+def _nginx_cdn_fallback(provider: PhantomProvider) -> str:
+    """Plaintext anti-probe server for CDN mode (doorman forwards here)."""
+    return f"""\
+# PHANTOM anti-probe fallback for {provider.domain} (CDN mode)
+# TLS is terminated by the CDN/doorman; this is the plaintext content server
+# the doorman forwards unauthenticated requests to. Probers see a real site.
 
 server {{
     listen 127.0.0.1:8080;
