@@ -20,9 +20,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.models import PhantomProvider, CdnRelay
 from core.phantom import (
     _derive_token,
+    PHANTOM_CDN_ORIGIN_PORT,
     generate_cdn_uri,
     generate_direct_uri,
-    generate_doorman_env,
     generate_nginx_fallback_conf,
     generate_subscription,
     generate_xray_server_config,
@@ -78,13 +78,11 @@ def main() -> None:
         )
 
     # --- generate ---------------------------------------------------------
-    xray_direct = generate_xray_server_config(provider, uuids, mode="direct") \
-                  if args.mode in ("direct", "both") else None
-    xray_cdn    = generate_xray_server_config(provider, uuids, mode="cdn") \
-                  if args.mode in ("cdn", "both") else None
+    # The Xray config is identical for every mode (XHTTP on 127.0.0.1:10000);
+    # only the nginx front and the client URI differ between direct and cdn.
+    xray_config = generate_xray_server_config(provider, uuids)
     nginx_mode  = "cdn" if args.mode == "cdn" else "direct"
     nginx_conf  = generate_nginx_fallback_conf(provider, mode=nginx_mode)
-    doorman_env = generate_doorman_env(provider) if args.mode in ("cdn", "both") else None
 
     client_uris: list[str] = []
     for i, uid in enumerate(uuids):
@@ -102,13 +100,7 @@ def main() -> None:
 
     files: dict[str, str] = {}
 
-    if xray_direct:
-        files["xray_config_direct.json"] = json.dumps(xray_direct, indent=2, ensure_ascii=False)
-    if xray_cdn:
-        files["xray_config_cdn.json"] = json.dumps(xray_cdn, indent=2, ensure_ascii=False)
-    if doorman_env:
-        files["doorman.env"] = doorman_env
-
+    files["xray_config.json"]    = json.dumps(xray_config, indent=2, ensure_ascii=False)
     files["nginx_fallback.conf"] = nginx_conf
     files["subscription.txt"]    = "\n".join(client_uris)
     files["subscription.b64"]    = subscription
@@ -131,7 +123,8 @@ def main() -> None:
     print(f"Domain:     {args.domain}")
     print(f"Server IP:  {args.ip}")
     print(f"Mode:       {args.mode}")
-    print(f"WS path:    {ws_path}")
+    print(f"Transport:  XHTTP (xhttp) over TLS")
+    print(f"Path:       {ws_path}")
     print(f"Secret:     {provider.secret}  ← keep this safe")
     print(f"Users:      {len(uuids)}")
     print(f"Output dir: {out}")
@@ -143,39 +136,28 @@ def main() -> None:
 
     # --- apply to system paths (--apply) ----------------------------------
     if args.apply:
-        _apply(args, files, xray_direct, xray_cdn, doorman_env)
+        _apply(args, files)
 
 
-def _apply(args: argparse.Namespace, files: dict, xray_direct, xray_cdn, doorman_env) -> None:
+def _apply(args: argparse.Namespace, files: dict) -> None:
     if os.geteuid() != 0:
         sys.exit("--apply requires root (run with sudo)")
-
-    import shutil
 
     # Xray config
     xray_cfg_path = "/usr/local/etc/xray/config.json"
     os.makedirs(os.path.dirname(xray_cfg_path), exist_ok=True)
-    xray_config = xray_direct or xray_cdn
     with open(xray_cfg_path, "w") as f:
-        json.dump(xray_config, f, indent=2, ensure_ascii=False)
+        f.write(files["xray_config.json"])
     print(f"[OK] Written Xray config → {xray_cfg_path}")
 
-    # nginx fallback
+    # nginx site
     nginx_site = "/etc/nginx/sites-available/phantom-fallback"
     with open(nginx_site, "w") as f:
         f.write(files["nginx_fallback.conf"])
     enabled = "/etc/nginx/sites-enabled/phantom-fallback"
     if not os.path.exists(enabled):
         os.symlink(nginx_site, enabled)
-    print(f"[OK] Written nginx fallback → {nginx_site}")
-
-    # Doorman env (CDN mode)
-    if doorman_env:
-        os.makedirs("/etc/phantom", exist_ok=True)
-        with open("/etc/phantom/doorman.env", "w") as f:
-            f.write(doorman_env)
-        os.chmod("/etc/phantom/doorman.env", 0o600)
-        print("[OK] Written doorman env → /etc/phantom/doorman.env")
+    print(f"[OK] Written nginx site → {nginx_site}")
 
     # Secret backup
     os.makedirs("/etc/phantom", exist_ok=True)
@@ -186,10 +168,11 @@ def _apply(args: argparse.Namespace, files: dict, xray_direct, xray_cdn, doorman
 
     print()
     print("Next steps:")
-    print("  systemctl reload nginx")
+    print("  nginx -t && systemctl reload nginx")
     print("  systemctl restart xray")
-    if doorman_env:
-        print("  systemctl start phantom-doorman")
+    if args.mode == "cdn":
+        print(f"  # CDN mode: point your CDN origin at HTTP 127.0.0.1:{PHANTOM_CDN_ORIGIN_PORT}")
+        print("  # (the CDN terminates TLS; see server/configs/gcore_setup.md)")
 
 
 if __name__ == "__main__":

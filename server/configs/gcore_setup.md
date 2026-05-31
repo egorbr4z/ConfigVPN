@@ -1,35 +1,67 @@
 # Gcore CDN Setup for PHANTOM (Whitelist Bypass)
 
 Gcore CDN has edge nodes in Moscow and St. Petersburg. In a Russian whitelist
-scenario, Gcore's IP ranges are likely to be included as major infrastructure.
+scenario, Gcore's IP ranges are likely to be included as major infrastructure,
+so traffic to a Gcore edge IP is allowed while your raw origin IP is not.
+
+PHANTOM uses the **XHTTP** transport, which rides on ordinary HTTP/2 requests
+and passes cleanly through CDNs. On the origin, **nginx** does the path routing
+(secret path → Xray, everything else → a real website). There is no Python
+doorman anymore.
+
+```
+client → Gcore edge (TLS, whitelisted IP) → origin nginx :8080 (HTTP)
+           ├─ /phantom/<token>  → Xray (127.0.0.1:10000, xhttp)
+           └─ everything else   → real website (anti-probe)
+```
 
 ## Prerequisites
 
 - A domain you control (e.g. `vpn.yourdomain.com`)
-- Your exit server running PHANTOM in CDN mode (doorman on port 8001)
+- Your exit server running PHANTOM in CDN mode (origin nginx on port 8080)
 - Gcore free account: https://gcore.com/cdn
 
 ---
 
-## Step 1: Create a Gcore CDN Resource
+## Step 1: Deploy the origin in CDN mode
+
+```bash
+cd /opt/phantom
+IP=$(curl -s4 ifconfig.me)
+python3 server/generate_config.py \
+    --domain vpn.yourdomain.com --ip "$IP" \
+    --mode cdn --cdn-domain vpn.yourdomain.com --apply
+
+nginx -t && systemctl reload nginx     # nginx now serves HTTP on 127.0.0.1:8080
+systemctl restart xray                 # Xray xhttp on 127.0.0.1:10000
+```
+
+The CDN must reach the origin nginx. Bind it publicly (edit the generated site
+to `listen <SERVER_IP>:8080;`) or, preferably, restrict the firewall so only
+Gcore origin-pull ranges can hit port 8080.
+
+---
+
+## Step 2: Create a Gcore CDN Resource
 
 1. Log in to Gcore → **CDN** → **Create CDN resource**.
 2. **Custom domain**: `vpn.yourdomain.com`
-3. **Origin**: your exit server IP, port 8001, protocol HTTP
-4. **Origin pull protocol**: HTTP (doorman handles plain HTTP from CDN)
+3. **Origin**: your exit server IP, port `8080`, protocol **HTTP**
+4. **Origin pull protocol**: HTTP (origin nginx serves plain HTTP)
 
 ---
 
-## Step 2: Enable WebSocket Support
+## Step 3: Enable HTTP/2 + HTTPS
 
 In the CDN resource settings:
-- **WebSocket**: Enable ✓
 - **HTTPS**: Enable, use Gcore's free Let's Encrypt cert for your domain
+- **HTTP/2**: Enable (XHTTP prefers H2)
 - **HTTP to HTTPS redirect**: Enable
+- **Websockets**: not required for XHTTP, but enabling it does no harm
 
 ---
 
-## Step 3: DNS
+## Step 4: DNS
 
 Add a CNAME record:
 ```
@@ -39,11 +71,11 @@ Gcore shows the CNAME target after creating the resource.
 
 ---
 
-## Step 4: Generate Client Configs
+## Step 5: Generate Client Configs
 
 ```python
-from core.phantom import PhantomProvider, new_phantom_provider, generate_cdn_uri
-from core.models import CdnRelay
+from core.models import PhantomProvider, CdnRelay
+from core.phantom import generate_cdn_uri
 
 provider = PhantomProvider(
     id="exit-1",
@@ -67,32 +99,31 @@ relay_front = CdnRelay(
     fronting_sni="vk.com",            # a high-traffic domain on same CDN
 )
 
-uri_cdn   = generate_cdn_uri(provider, relay_proxy)
-uri_front = generate_cdn_uri(provider, relay_front)
-
-print("CDN proxy:", uri_cdn)
-print("Fronting:", uri_front)
+print("CDN proxy:", generate_cdn_uri(provider, relay_proxy))
+print("Fronting:", generate_cdn_uri(provider, relay_front))
 ```
+
+Or simply run the generator with `--mode cdn --cdn-domain ... [--fronting-sni ...]`
+and copy the URIs from the `CLIENT URIS:` block.
 
 ---
 
-## Step 5: Test CDN Fronting (optional)
+## Step 6: Test CDN Fronting (optional)
 
-Check whether Gcore allows SNI mismatch:
+Check whether Gcore allows SNI mismatch (true fronting). XHTTP issues an
+HTTP/2 GET to the secret path; an authenticated request returns 200 and starts
+streaming, an unauthenticated path returns the real website.
 
 ```bash
-# Get Gcore edge IP for your domain
 EDGE_IP=$(dig +short vpn.yourdomain.com | head -1)
 
-# Test: SNI = vk.com, Host = your CDN domain → expect 101 WS upgrade with token
-curl -v --resolve "vk.com:443:$EDGE_IP" \
+# SNI = vk.com, Host = your CDN domain, path = secret → expect HTTP 200
+curl -v --http2 --resolve "vk.com:443:$EDGE_IP" \
   -H "Host: vpn.yourdomain.com" \
-  -H "Upgrade: websocket" \
-  -H "Connection: Upgrade" \
-  "https://vk.com/phantom/YOUR_TOKEN" 2>&1 | grep -E "< HTTP|< Upgrade"
+  "https://vk.com/phantom/YOUR_TOKEN" 2>&1 | grep -E "< HTTP|alpn"
 
-# If you see "101 Switching Protocols" → fronting works on this CDN.
-# If you see "421 Misdirected Request" or 400 → fronting is blocked; use proxy mode only.
+# 200 with SNI=vk.com,Host=your-domain → fronting works on this CDN.
+# 421 Misdirected Request / 400 → fronting blocked; use CDN-as-proxy mode.
 ```
 
 ---
@@ -105,15 +136,15 @@ curl -v --resolve "vk.com:443:$EDGE_IP" \
 | True fronting | Unknown — CDN-dependent | CDN must not enforce SNI==Host |
 
 Most large CDNs (Cloudflare, AWS) block true fronting. Gcore's free tier may or
-may not. The subscription includes both URIs; the client tries both and uses
+may not. The subscription can include both URIs; the client tries both and uses
 whichever connects.
 
 ---
 
 ## Alternative CDN Providers with Russian Presence
 
-| Provider | Free tier | WebSocket | RU edge | Notes |
-|----------|-----------|-----------|---------|-------|
+| Provider | Free tier | HTTP/2 | RU edge | Notes |
+|----------|-----------|--------|---------|-------|
 | Gcore | Yes | Yes | Moscow, SPb | Primary recommendation |
 | EdgeCenter | Yes | Yes | Moscow | Gcore subsidiary |
 | CDNVIDEO | No | ? | Moscow | Russian CDN, enterprise |

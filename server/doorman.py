@@ -1,5 +1,12 @@
 """PHANTOM Doorman — CDN-mode HTTP front-door for Xray.
 
+.. deprecated::
+    LEGACY — kept for reference only. PHANTOM now uses the XHTTP transport and
+    nginx does the CDN-origin path routing natively (see
+    ``generate_nginx_fallback_conf(mode="cdn")``), so this WebSocket-specific
+    Python proxy is no longer part of the data path. Do not deploy it for new
+    setups; it does not understand XHTTP's multi-request framing.
+
 Usage
 -----
     PHANTOM_SECRET=... python -m server.doorman
