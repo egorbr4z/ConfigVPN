@@ -89,7 +89,7 @@ def _build_uri(
     path: str,
     name: str,
     fp: str = "chrome",
-    mode: str = "auto",
+    mode: str = "packet-up",
 ) -> str:
     params = {
         "encryption": "none",
@@ -252,12 +252,15 @@ def _nginx_routing_locations(ws_path: str, xray_port: int) -> str:
     """
     return f"""\
     # --- Secret XHTTP path → Xray (invisible inside TLS) ---
+    # XHTTP packet-up rides on plain HTTP/1.1 requests, so buffering must be
+    # off in both directions for the up POSTs and the long-lived down GET.
     location {ws_path} {{
         proxy_pass              http://127.0.0.1:{xray_port};
         proxy_http_version      1.1;
         proxy_set_header        Host            $host;
         proxy_set_header        X-Real-IP       $remote_addr;
         proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header        Connection      "";
         proxy_buffering         off;
         proxy_request_buffering off;
         client_max_body_size    0;
@@ -266,9 +269,14 @@ def _nginx_routing_locations(ws_path: str, xray_port: int) -> str:
     }}
 
     # --- Anti-probe: everything else looks like a real website ---
+    # proxy_pass uses a variable so nginx resolves at runtime via the resolver
+    # below; ipv6=off avoids picking an AAAA the server can't reach.
     location / {{
-        proxy_pass            https://www.iana.org;
+        resolver              1.1.1.1 8.8.8.8 ipv6=off valid=300s;
+        set $phantom_fallback "www.iana.org";
+        proxy_pass            https://$phantom_fallback;
         proxy_ssl_server_name on;
+        proxy_ssl_name        www.iana.org;
         proxy_set_header      Host            www.iana.org;
         proxy_set_header      X-Real-IP       $remote_addr;
         proxy_set_header      Accept-Encoding "";
