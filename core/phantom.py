@@ -9,40 +9,24 @@ PHANTOM combines the strongest anti-detection properties of four protocols:
   • VLESS    — lightweight framing, standard client support
   • (SS)     — high-entropy payload hidden inside normal-looking HTTPS
 
-Transport
----------
-PHANTOM uses Xray's XHTTP transport (network="xhttp") over TLS. XHTTP rides
-on ordinary HTTP/2 (or HTTP/1.1) requests, so it passes cleanly through CDNs
-and reverse proxies, and — unlike the older WebSocket transport — is not
-deprecated in current Xray.
+Transports
+----------
+1. REALITY (default, recommended) — VLESS + Vision + REALITY (network="tcp",
+   security="reality"). No domain, no certificate, no nginx: Xray binds :443
+   directly and borrows the live TLS handshake of a real, reachable site (the
+   "dest"). To DPI / active probers the connection is indistinguishable from a
+   genuine visit to that site; unauthenticated probes are transparently
+   forwarded to it, so anti-probe is native. Fastest path — nothing between
+   the client and Xray on the data path.
 
-Auth mechanism
---------------
-A secret HTTP path is used instead of a UUID payload or Cookie header:
-  path = /phantom/<TOKEN>
-  TOKEN = HMAC-SHA256(secret, b"phantom-v1")[:16].hex()
+2. XHTTP (legacy / CDN) — VLESS + XHTTP (network="xhttp") behind an nginx TLS
+   front (needs a domain + cert). A secret HTTP path authenticates:
+     path = /phantom/<TOKEN>,  TOKEN = HMAC-SHA256(secret, b"phantom-v1")[:16].hex()
+   The path lives inside TLS (invisible to DPI); other paths are served real
+   web content by nginx (anti-probe). Kept for clients without REALITY support
+   and for CDN fronting scenarios (CdnRelay).
 
-The path is transmitted inside TLS — invisible to DPI. Requests to any other
-path are served real web content by nginx (anti-probe). This is fully
-expressible in a standard VLESS URI (type=xhttp, path= parameter).
-
-Two deployment modes
---------------------
-  Direct  — nginx terminates TLS on :443 with a real Let's Encrypt cert and
-             reverse-proxies the secret path to a local Xray XHTTP listener;
-             every other path is served real web content (anti-probe).
-  CDN     — the CDN terminates TLS and origin-pulls plain HTTP from nginx on
-             a local port (default 8080); nginx does the same path routing.
-             Used for whitelist-mode bypass (CDN edge IPs are whitelisted).
-
-In both modes nginx does the path routing and Xray speaks plaintext XHTTP on
-127.0.0.1:10000 — no Python on the data path.
-
-True CDN fronting (optional)
------------------------------
-  If CdnRelay.fronting_sni is set, the client URI uses SNI = whitelisted domain
-  while Host header = our cdn_domain (same CDN). CDN routes by Host regardless
-  of SNI if it does not enforce strict SNI==Host validation.
+Both transports share the domestic TCP-passthrough relay for whitelist bypass.
 """
 
 from __future__ import annotations
