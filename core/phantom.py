@@ -344,6 +344,7 @@ server {{
 server {{
     listen 443 ssl;
     listen [::]:443 ssl;
+    http2 on;                       # XHTTP clients speak HTTP/2 over TLS
     server_name {provider.domain};
 
     ssl_certificate     /etc/letsencrypt/live/{provider.domain}/fullchain.pem;
