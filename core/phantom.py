@@ -9,24 +9,34 @@ PHANTOM combines the strongest anti-detection properties of four protocols:
   • VLESS    — lightweight framing, standard client support
   • (SS)     — high-entropy payload hidden inside normal-looking HTTPS
 
+Transport
+---------
+PHANTOM uses Xray's XHTTP transport (network="xhttp") over TLS. XHTTP rides
+on ordinary HTTP/2 (or HTTP/1.1) requests, so it passes cleanly through CDNs
+and reverse proxies, and — unlike the older WebSocket transport — is not
+deprecated in current Xray.
+
 Auth mechanism
 --------------
-A secret WS path is used instead of a UUID payload or Cookie header:
+A secret HTTP path is used instead of a UUID payload or Cookie header:
   path = /phantom/<TOKEN>
   TOKEN = HMAC-SHA256(secret, b"phantom-v1")[:16].hex()
 
-The path is transmitted inside TLS — invisible to DPI. Clients that do not
-know TOKEN hit any other path → Xray fallback → nginx → real web content.
-This is fully expressible in a standard VLESS URI (path= parameter).
+The path is transmitted inside TLS — invisible to DPI. Requests to any other
+path are served real web content by nginx (anti-probe). This is fully
+expressible in a standard VLESS URI (type=xhttp, path= parameter).
 
 Two deployment modes
 --------------------
-  Direct  — Xray listens on 443, handles TLS with real Let's Encrypt cert,
-             built-in Xray fallbacks serve nginx for unauthenticated requests.
-             No Python on the data path → full Xray throughput.
-  CDN     — CDN terminates TLS, forwards HTTP/WS to the Python doorman on
-             a local port, doorman checks path and pipes to Xray unix socket.
+  Direct  — nginx terminates TLS on :443 with a real Let's Encrypt cert and
+             reverse-proxies the secret path to a local Xray XHTTP listener;
+             every other path is served real web content (anti-probe).
+  CDN     — the CDN terminates TLS and origin-pulls plain HTTP from nginx on
+             a local port (default 8080); nginx does the same path routing.
              Used for whitelist-mode bypass (CDN edge IPs are whitelisted).
+
+In both modes nginx does the path routing and Xray speaks plaintext XHTTP on
+127.0.0.1:10000 — no Python on the data path.
 
 True CDN fronting (optional)
 -----------------------------
@@ -48,9 +58,13 @@ from urllib.parse import quote, urlencode
 from core.models import CdnRelay, PhantomProvider
 
 
-# Local plaintext port where Xray listens in "direct" mode. nginx terminates
-# TLS on :443 and reverse-proxies the secret WebSocket path to this port.
+# Local plaintext port where Xray listens for XHTTP. nginx (direct mode) or
+# the CDN origin nginx (cdn mode) reverse-proxies the secret path to this port.
 PHANTOM_XRAY_PORT = 10000
+
+# Local plaintext HTTP port nginx exposes in "cdn" mode for the CDN to
+# origin-pull from (the CDN terminates TLS, so this port serves plain HTTP).
+PHANTOM_CDN_ORIGIN_PORT = 8080
 
 
 # ---------------------------------------------------------------------------
@@ -75,13 +89,15 @@ def _build_uri(
     path: str,
     name: str,
     fp: str = "chrome",
+    mode: str = "auto",
 ) -> str:
     params = {
         "encryption": "none",
         "security":   "tls",
         "sni":        sni,
         "fp":         fp,
-        "type":       "ws",
+        "type":       "xhttp",
+        "mode":       mode,
         "path":       path,
         "host":       host,
     }
@@ -173,36 +189,30 @@ def generate_xray_server_config(
 ) -> dict:
     """Return Xray JSON configuration for the exit server.
 
-    mode="direct"  — Xray listens on a local plaintext WS port; nginx
-                      terminates TLS on :443 and reverse-proxies the secret
-                      path here, serving real content for everything else.
-    mode="cdn"     — Xray listens on unix socket (doorman handles TLS / HTTP).
-
-    In both modes TLS is terminated in front of Xray (by nginx or the CDN),
-    never by Xray itself. This is what makes the Xray-level WebSocket fallback
-    unnecessary: nginx routes the secret path to Xray and every other request
-    to a real website, so the server is indistinguishable from a normal site.
+    The Xray config is identical for both deployment modes: Xray speaks
+    plaintext XHTTP on 127.0.0.1:10000. TLS is always terminated in front of
+    Xray (by nginx in direct mode, by the CDN in cdn mode), and nginx routes
+    the secret path here while serving real web content for everything else.
+    The ``mode`` argument is accepted for symmetry with the other generators.
     """
     token = _derive_token(provider.secret)
-    ws_path = f"/phantom/{token}"
+    path = f"/phantom/{token}"
     clients = [{"id": uid, "flow": "", "level": 0} for uid in user_uuids]
 
-    # Both modes: plaintext WebSocket behind a TLS-terminating front.
+    # XHTTP over plaintext, behind a TLS-terminating front (nginx / CDN).
     stream = {
-        "network": "ws",
+        "network": "xhttp",
         "security": "none",
-        "wsSettings": {"path": ws_path},
+        "xhttpSettings": {
+            "path": path,
+            "mode": "auto",
+        },
     }
-
-    if mode == "direct":
-        inbound_listen = "127.0.0.1"
-        inbound_port = PHANTOM_XRAY_PORT
-    else:  # cdn mode
-        inbound_listen = "/tmp/phantom.sock,0666"
-        inbound_port = 0      # unix socket ignores port
 
     inbound: dict = {
         "tag": "phantom-inbound",
+        "listen": "127.0.0.1",
+        "port": PHANTOM_XRAY_PORT,
         "protocol": "vless",
         "settings": {
             "clients": clients,
@@ -210,10 +220,6 @@ def generate_xray_server_config(
         },
         "streamSettings": stream,
     }
-
-    inbound["listen"] = inbound_listen
-    if mode == "direct":
-        inbound["port"] = inbound_port
 
     return {
         "log": {"loglevel": "warning", "access": "/var/log/xray/access.log"},
@@ -236,6 +242,45 @@ def generate_xray_server_config(
     }
 
 
+def _nginx_routing_locations(ws_path: str, xray_port: int) -> str:
+    """The two location blocks shared by direct and cdn nginx configs.
+
+    The secret path (prefix match — XHTTP appends session sub-paths) is
+    reverse-proxied to the local Xray XHTTP listener; everything else is
+    served real web content for anti-probe. Buffering is disabled so XHTTP's
+    streaming up/down requests are not stalled by nginx.
+    """
+    return f"""\
+    # --- Secret XHTTP path → Xray (invisible inside TLS) ---
+    location {ws_path} {{
+        proxy_pass              http://127.0.0.1:{xray_port};
+        proxy_http_version      1.1;
+        proxy_set_header        Host            $host;
+        proxy_set_header        X-Real-IP       $remote_addr;
+        proxy_set_header        X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_buffering         off;
+        proxy_request_buffering off;
+        client_max_body_size    0;
+        proxy_read_timeout      300s;
+        proxy_send_timeout      300s;
+    }}
+
+    # --- Anti-probe: everything else looks like a real website ---
+    location / {{
+        proxy_pass            https://www.iana.org;
+        proxy_ssl_server_name on;
+        proxy_set_header      Host            www.iana.org;
+        proxy_set_header      X-Real-IP       $remote_addr;
+        proxy_set_header      Accept-Encoding "";
+        proxy_hide_header     X-Powered-By;
+        proxy_hide_header     x-amz-id-2;
+        proxy_hide_header     x-amz-request-id;
+        proxy_hide_header     CF-Ray;
+        proxy_hide_header     CF-Cache-Status;
+        add_header            X-Content-Type-Options "nosniff" always;
+    }}"""
+
+
 def generate_nginx_fallback_conf(
     provider: PhantomProvider,
     xray_port: int = PHANTOM_XRAY_PORT,
@@ -244,26 +289,39 @@ def generate_nginx_fallback_conf(
 ) -> str:
     """nginx site config for PHANTOM.
 
-    mode="direct" — nginx terminates TLS on :443 and:
-      • reverse-proxies the secret WebSocket path to the local Xray listener
-        (the path lives inside TLS, invisible to DPI);
-      • serves real web content for every other request, so active probers
-        and DPI see an ordinary website and no trace of a VPN.
+    mode="direct" — nginx terminates TLS on :443 and reverse-proxies the
+      secret XHTTP path to the local Xray listener (the path lives inside TLS,
+      invisible to DPI); every other request is served real web content, so
+      active probers and DPI see an ordinary website and no trace of a VPN.
       HTTP :80 keeps the ACME challenge path open (for certbot renewal) and
       redirects everything else to HTTPS.
 
-    mode="cdn"    — TLS is terminated by the CDN/doorman, so nginx is just the
-      plaintext anti-probe content server the doorman forwards unauthenticated
-      requests to (127.0.0.1:8080).
+    mode="cdn"    — TLS is terminated by the CDN; nginx serves plain HTTP on
+      127.0.0.1:{PHANTOM_CDN_ORIGIN_PORT} for the CDN to origin-pull from and
+      does the same path routing (secret path → Xray, else → real content).
     """
-    if mode == "cdn":
-        return _nginx_cdn_fallback(provider)
-
     token = _derive_token(provider.secret)
     ws_path = f"/phantom/{token}"
+    locations = _nginx_routing_locations(ws_path, xray_port)
+
+    if mode == "cdn":
+        return f"""\
+# PHANTOM CDN origin for {provider.domain}
+# The CDN terminates TLS and origin-pulls plain HTTP from this port. nginx
+# routes the secret XHTTP path to Xray and serves a real site for everything
+# else (anti-probe). Generated — do not edit.
+
+server {{
+    listen 127.0.0.1:{PHANTOM_CDN_ORIGIN_PORT};
+    server_name {provider.domain};
+
+{locations}
+}}
+"""
+
     return f"""\
 # PHANTOM TLS front for {provider.domain}
-# nginx terminates TLS and routes the secret WS path to Xray; every other
+# nginx terminates TLS and routes the secret XHTTP path to Xray; every other
 # request is served as a real website (anti-probe). Generated — do not edit.
 
 server {{
@@ -285,78 +343,8 @@ server {{
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
 
-    # --- Secret WebSocket path → Xray (invisible inside TLS) ---
-    location = {ws_path} {{
-        if ($http_upgrade != "websocket") {{ return 404; }}
-        proxy_pass            http://127.0.0.1:{xray_port};
-        proxy_http_version    1.1;
-        proxy_set_header      Upgrade    $http_upgrade;
-        proxy_set_header      Connection "upgrade";
-        proxy_set_header      Host       $host;
-        proxy_set_header      X-Real-IP  $remote_addr;
-        proxy_set_header      X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_read_timeout    300s;
-        proxy_send_timeout    300s;
-    }}
-
-    # --- Anti-probe: everything else looks like a real website ---
-    location / {{
-        proxy_pass            https://www.iana.org;
-        proxy_ssl_server_name on;
-        proxy_set_header      Host            www.iana.org;
-        proxy_set_header      X-Real-IP       $remote_addr;
-        proxy_set_header      Accept-Encoding "";
-        proxy_hide_header     X-Powered-By;
-        proxy_hide_header     x-amz-id-2;
-        proxy_hide_header     x-amz-request-id;
-        add_header            X-Content-Type-Options "nosniff" always;
-    }}
+{locations}
 }}
-"""
-
-
-def _nginx_cdn_fallback(provider: PhantomProvider) -> str:
-    """Plaintext anti-probe server for CDN mode (doorman forwards here)."""
-    return f"""\
-# PHANTOM anti-probe fallback for {provider.domain} (CDN mode)
-# TLS is terminated by the CDN/doorman; this is the plaintext content server
-# the doorman forwards unauthenticated requests to. Probers see a real site.
-
-server {{
-    listen 127.0.0.1:8080;
-    server_name {provider.domain};
-
-    location / {{
-        proxy_pass         https://www.iana.org;
-        proxy_ssl_server_name on;
-        proxy_set_header   Host               www.iana.org;
-        proxy_set_header   X-Real-IP          $remote_addr;
-        proxy_set_header   Accept-Encoding    "";
-        proxy_hide_header  X-Powered-By;
-        proxy_hide_header  x-amz-id-2;
-        proxy_hide_header  x-amz-request-id;
-        add_header         Server             "nginx/1.24.0" always;
-        add_header         X-Content-Type-Options "nosniff" always;
-    }}
-}}
-"""
-
-
-def generate_doorman_env(provider: PhantomProvider, listen_port: int = 8001) -> str:
-    """Return a .env file content for the CDN-mode doorman process."""
-    token = _derive_token(provider.secret)
-    return f"""\
-# PHANTOM Doorman environment (CDN mode)
-# Place this at /etc/phantom/.env and run: python -m server.doorman
-
-PHANTOM_SECRET={provider.secret}
-PHANTOM_TOKEN={token}
-PHANTOM_WS_PATH=/phantom/{token}
-PHANTOM_XRAY_SOCK=/tmp/phantom.sock
-PHANTOM_LISTEN_ADDR=0.0.0.0
-PHANTOM_LISTEN_PORT={listen_port}
-PHANTOM_NGINX_ADDR=127.0.0.1
-PHANTOM_NGINX_PORT=8080
 """
 
 

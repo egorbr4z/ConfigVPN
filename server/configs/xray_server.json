@@ -1,9 +1,9 @@
 {
   "_comment": [
-    "PHANTOM — Direct mode Xray server config.",
-    "Xray listens on a LOCAL plaintext WebSocket port (127.0.0.1:10000).",
-    "nginx terminates TLS on :443 and reverse-proxies the secret path here,",
-    "serving real web content for every other request (anti-probe).",
+    "PHANTOM — Xray server config (XHTTP transport).",
+    "Same config for both direct and cdn modes: Xray speaks plaintext XHTTP",
+    "on 127.0.0.1:10000. TLS is terminated in front of Xray by nginx (direct)",
+    "or by the CDN (cdn); nginx routes the secret path here.",
     "Replace: PHANTOM_TOKEN, USER_UUID_1 ... USER_UUID_N",
     "",
     "Generate PHANTOM_TOKEN: python3 -c \"",
@@ -34,11 +34,12 @@
         "decryption": "none"
       },
       "streamSettings": {
-        "network": "ws",
+        "network": "xhttp",
         "security": "none",
-        "wsSettings": {
-          "_comment": "TLS is terminated by nginx; nginx only forwards this exact path here",
-          "path": "/phantom/PHANTOM_TOKEN"
+        "xhttpSettings": {
+          "_comment": "TLS is terminated in front; nginx forwards only this path here",
+          "path": "/phantom/PHANTOM_TOKEN",
+          "mode": "auto"
         }
       }
     }
