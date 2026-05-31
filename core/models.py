@@ -133,6 +133,25 @@ class PhantomProvider:
 
 
 @dataclass
+class RealityConfig:
+    """VLESS-Vision-REALITY parameters for the exit server.
+
+    REALITY needs no domain and no certificate: the exit borrows the live TLS
+    handshake of a real, reachable site (``dest``) and presents its certificate
+    to anyone who is not an authenticated client. To DPI / active probers the
+    connection is indistinguishable from a genuine visit to that site.
+
+    Keys are an x25519 pair (base64url-raw, 32 bytes each), as produced by
+    ``xray x25519`` or :func:`core.phantom.generate_reality_keypair`.
+    """
+    private_key: str                      # server side (kept secret)
+    public_key: str                       # client side (goes in the URI as pbk)
+    dest: str = "www.microsoft.com:443"   # real site whose handshake we borrow
+    server_name: str = "www.microsoft.com"  # SNI; must be served by dest, TLS1.3
+    short_id: str = ""                    # hex shortId (max 16 hex chars; "" allowed)
+
+
+@dataclass
 class CdnRelay:
     """CDN relay configuration for whitelist-mode bypass (Плечо B).
 
