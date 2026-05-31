@@ -168,6 +168,35 @@ def generate_cdn_uri(
     )
 
 
+def generate_relay_uri(
+    provider: PhantomProvider,
+    relay_ip: str,
+    user_uuid: str | None = None,
+    name: str = "PHANTOM-Whitelist",
+    fp: str = "chrome",
+) -> str:
+    """VLESS URI that enters via a domestic TCP-passthrough relay.
+
+    For leaky/regional whitelist regimes: the entry is a domestic server whose
+    IP is reachable while the exit's IP is not. The relay blindly forwards raw
+    TCP :443 to the exit, so TLS stays end-to-end with the exit — SNI and Host
+    remain provider.domain and the exit's real cert is validated by the client.
+    Only the connection address changes to the relay's (domestic) IP.
+    """
+    uid = user_uuid or str(uuid.uuid4())
+    token = _derive_token(provider.secret)
+    return _build_uri(
+        user_uuid=uid,
+        address=relay_ip,
+        port=provider.port,
+        sni=provider.domain,
+        host=provider.domain,
+        path=f"/phantom/{token}",
+        name=name,
+        fp=fp,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Subscription
 # ---------------------------------------------------------------------------
@@ -353,6 +382,39 @@ server {{
     ssl_ciphers         HIGH:!aNULL:!MD5;
 
 {locations}
+}}
+"""
+
+
+def generate_relay_stream_conf(
+    provider: PhantomProvider,
+    listen_port: int = 443,
+) -> str:
+    """nginx `stream` config for the domestic relay (whitelist entry).
+
+    Blind TCP passthrough to the exit: the relay forwards the raw TLS stream
+    and terminates nothing, so it never sees plaintext and needs no cert. TLS
+    is end-to-end between the client and the exit (cert = provider.domain).
+
+    This block lives in nginx's top-level `stream` context (NOT http / not
+    sites-enabled). Requires the stream module: `apt install libnginx-mod-stream`.
+    Include it from the top level of nginx.conf, e.g. add at the end of the file:
+        include /etc/nginx/phantom-relay.conf;
+    """
+    return f"""\
+# PHANTOM domestic relay (whitelist entry) — raw TCP passthrough to the exit.
+# Top-level `stream` context. Needs: apt install libnginx-mod-stream
+# TLS stays end-to-end with the exit ({provider.domain}); the relay sees only
+# ciphertext and presents no certificate of its own.
+
+stream {{
+    server {{
+        listen {listen_port};
+        listen [::]:{listen_port};
+        proxy_pass            {provider.server_ip}:{provider.port};
+        proxy_connect_timeout 10s;
+        proxy_timeout         300s;
+    }}
 }}
 """
 
