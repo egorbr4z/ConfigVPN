@@ -24,6 +24,8 @@ from core.phantom import (
     generate_cdn_uri,
     generate_direct_uri,
     generate_nginx_fallback_conf,
+    generate_relay_stream_conf,
+    generate_relay_uri,
     generate_subscription,
     generate_xray_server_config,
     new_phantom_provider,
@@ -41,6 +43,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cdn-domain",    default="", help="[CDN mode] CDN domain (e.g. cdn.example.com)")
     p.add_argument("--cdn-edge-ip",   default="", help="[CDN mode] CDN RU edge IP for fronting")
     p.add_argument("--fronting-sni",  default="", help="[CDN mode] Fronting SNI (e.g. vk.com)")
+    p.add_argument("--relay-ip",      default="", help="Domestic relay IP for whitelist entry; "
+                   "also emits a whitelist client URI and relay_stream.conf (TCP passthrough to exit)")
     p.add_argument("--apply",    action="store_true",
                    help="Write configs to system paths (needs root; review output first)")
     p.add_argument("--out-dir",  default="./phantom-out",
@@ -91,6 +95,12 @@ def main() -> None:
             client_uris.append(generate_direct_uri(provider, uid, f"PHANTOM-Direct{suffix}"))
         if relay and args.mode in ("cdn", "both"):
             client_uris.append(generate_cdn_uri(provider, relay, uid, suffix))
+        # Domestic relay (whitelist entry) — independent of CDN, adds a second
+        # entry point to the same exit for leaky/regional whitelist regimes.
+        if args.relay_ip:
+            client_uris.append(
+                generate_relay_uri(provider, args.relay_ip, uid, f"PHANTOM-Whitelist{suffix}")
+            )
 
     subscription = generate_subscription(client_uris)
 
@@ -102,6 +112,8 @@ def main() -> None:
 
     files["xray_config.json"]    = json.dumps(xray_config, indent=2, ensure_ascii=False)
     files["nginx_fallback.conf"] = nginx_conf
+    if args.relay_ip:
+        files["relay_stream.conf"] = generate_relay_stream_conf(provider)
     files["subscription.txt"]    = "\n".join(client_uris)
     files["subscription.b64"]    = subscription
     files["phantom.secret"]      = (

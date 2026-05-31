@@ -1,8 +1,16 @@
-# Gcore CDN Setup for PHANTOM (Whitelist Bypass)
+# Gcore CDN Setup for PHANTOM
 
-Gcore CDN has edge nodes in Moscow and St. Petersburg. In a Russian whitelist
-scenario, Gcore's IP ranges are likely to be included as major infrastructure,
-so traffic to a Gcore edge IP is allowed while your raw origin IP is not.
+> **Reality check.** A *foreign* CDN only helps against **blacklist / DPI**
+> censorship, where disguising the traffic is what matters. It does **not**
+> survive a **whitelist** regime: if the CDN's edge IPs are foreign and/or
+> unreachable in the region (e.g. Gcore is not available in RF), traffic never
+> reaches them regardless of disguise. For whitelist bypass use a **domestic
+> TCP relay** instead — see `whitelist_relay.md`. Keep this guide only for the
+> blacklist/DPI case or where a CDN's edges are genuinely reachable + allowed.
+
+Gcore CDN has edge nodes in Moscow and St. Petersburg. Where those edges are
+reachable, traffic to a Gcore edge IP can pass while your raw origin IP is
+filtered by DPI.
 
 PHANTOM uses the **XHTTP** transport, which rides on ordinary HTTP/2 requests
 and passes cleanly through CDNs. On the origin, **nginx** does the path routing
